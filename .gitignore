@@ -1,0 +1,25 @@
+# data never committed (DESIGN.md P8)
+data/
+raw/
+silver/
+gold/
+ledger/
+scores/
+reports/
+registry/
+*.parquet
+*.duckdb
+# env / secrets
+.env
+.env.*
+*.pem
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
