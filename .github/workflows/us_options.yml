@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "30 12 * * 1-5"  # pre-market ET (OI updated overnight)
     - cron: "30 0 * * 2-6"   # post-close ET (day volume)
+  push:
+    branches: [phase1/options]  # TEMP: test from Actions before merge
   workflow_dispatch:
     inputs:
       snapshot:
@@ -48,7 +50,7 @@ jobs:
           if [ "$EVENT" = "schedule" ]; then
             if [ "$SCHED" = "30 12 * * 1-5" ]; then SNAP=pre; else SNAP=post; fi
           else
-            SNAP="$IN_SNAPSHOT"
+            SNAP="${IN_SNAPSHOT:-post}"; IN_LIMIT="${IN_LIMIT:-8}"; IN_FORCE="${IN_FORCE:-true}"
           fi
           ARGS="--snapshot $SNAP"
           [ -n "$IN_LIMIT" ] && ARGS="$ARGS --limit $IN_LIMIT"
