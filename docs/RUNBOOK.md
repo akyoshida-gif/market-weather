@@ -12,7 +12,7 @@ Env overrides: `MW_STORAGE_BACKEND=local|r2`, `MW_LOCAL_ROOT=./data`, `MW_SETTIN
 | name | value |
 |---|---|
 | `R2_ENDPOINT_URL` | `https://<account_id>.r2.cloudflarestorage.com` |
-| `R2_ACCESS_KEY_ID` | R2 API token (Object Read & Write, bucket `market-weather-data` only) |
+| `R2_ACCESS_KEY_ID` | R2 API token (Object Read & Write, bucket `market-weather-actions` only) |
 | `R2_SECRET_ACCESS_KEY` | same token's secret |
 Without R2 secrets, the `smoke` workflow falls back to the local backend.
 
