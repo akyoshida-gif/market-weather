@@ -36,13 +36,13 @@ SNAPSHOT_MAP = {
 
 class MoomooProvider:
     def __init__(self, host: str = "127.0.0.1", port: int = 11111) -> None:
-        from moomoo import OpenQuoteContext  # type: ignore[import-not-found]
+        from moomoo import OpenQuoteContext
 
         self.ctx = OpenQuoteContext(host=host, port=port)
         self.chain_limiter = RateLimiter(10 / 30, burst=1)
         self.snap_limiter = RateLimiter(60 / 30, burst=1)
         self._ok: Any = None
-        import moomoo  # type: ignore[import-not-found]
+        import moomoo
 
         self._ok = moomoo.RET_OK
 
