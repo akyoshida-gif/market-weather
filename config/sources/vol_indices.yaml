@@ -1,0 +1,9 @@
+source_id: vol_indices
+version: "0.1.0"
+verified_at: "2026-10-23"
+endpoint: https://cdn.cboe.com/api/global/us_indices/daily_prices/{VIX,VIX9D,VIX3M,VIX6M,VVIX,SKEW}_History.csv
+format: CSV full history, DATE MM/DD/YYYY; VVIX/SKEW single value column
+publish_lag_rule: as_of + 1 day 03:00 UTC (observed Last-Modified ~01:30 UTC)
+history: VIX/SKEW 1990-, VVIX 2006-, VIX6M 2008-, VIX3M 2009-, VIX9D 2011-
+not_available: MOVE (ICE, paid) -> Yahoo ^MOVE best-effort later
+tos_notes: Cboe terms - personal non-commercial use.

@@ -4,8 +4,6 @@ on:
   schedule:
     - cron: "30 2 * * 2-6"   # after Cboe (~01:30 UTC) and FINRA Reg SHO (<=23:00 UTC)
     - cron: "0 14 * * 1-5"   # retry / catch late publications (idempotent)
-  push:
-    branches: [phase1/us-macro]  # TEMP: test before merge
   workflow_dispatch:
     inputs:
       sources:

@@ -1,0 +1,9 @@
+source_id: finra_regsho_daily
+version: "0.1.0"
+verified_at: "2026-10-23"
+endpoint: https://cdn.finra.org/equity/regsho/daily/CNMSshvol{YYYYMMDD}.txt
+format: pipe-delimited; Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market; volumes decimal
+publish_lag_rule: session date 18:00 America/New_York (FINRA: no later than 6pm ET); unpublished -> 403
+history: CNMS from 2018-08-01
+schedule_utc: ["30 2 * * 2-6", "0 14 * * 1-5"]
+tos_notes: public FINRA data; personal use.
