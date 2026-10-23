@@ -1,0 +1,60 @@
+# US option chain snapshots (history only accumulates from start date -> run every session).
+name: us_options
+on:
+  schedule:
+    - cron: "30 12 * * 1-5"  # pre-market ET (OI updated overnight)
+    - cron: "30 0 * * 2-6"   # post-close ET (day volume)
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "pre | post"
+        required: true
+        default: post
+      limit:
+        description: "only first N symbols (empty = all)"
+        required: false
+      force:
+        description: "re-capture even if exists (true/false)"
+        required: false
+        default: "false"
+permissions:
+  contents: read
+concurrency:
+  group: us_options
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      MW_STORAGE_BACKEND: r2
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Capture snapshot
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHED: ${{ github.event.schedule }}
+          IN_SNAPSHOT: ${{ inputs.snapshot }}
+          IN_LIMIT: ${{ inputs.limit }}
+          IN_FORCE: ${{ inputs.force }}
+        run: |
+          if [ "$EVENT" = "schedule" ]; then
+            if [ "$SCHED" = "30 12 * * 1-5" ]; then SNAP=pre; else SNAP=post; fi
+          else
+            SNAP="$IN_SNAPSHOT"
+          fi
+          ARGS="--snapshot $SNAP"
+          [ -n "$IN_LIMIT" ] && ARGS="$ARGS --limit $IN_LIMIT"
+          [ "$IN_FORCE" = "true" ] && ARGS="$ARGS --force"
+          echo "args: $ARGS"
+          uv run python -m jobs.us_options_snapshot $ARGS
+      - name: Storage audit
+        if: always() && github.event.schedule == '30 0 * * 2-6'
+        run: uv run python -m jobs.storage_audit

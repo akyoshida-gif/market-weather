@@ -1,0 +1,14 @@
+source_id: us_options_chain
+version: "0.1.0"
+provider: yfinance (Yahoo Finance option chain endpoint, unofficial)
+verified_at: "2026-10-23"
+endpoint_notes: yfinance.Ticker(sym).options / .option_chain(expiry). Verified working locally 2026-10-23 (AAPL, 21 expiries, ~1s/expiry).
+schedule_utc:
+  pre: "30 12 * * 1-5"    # pre-market ET: OI updated overnight by OCC
+  post: "30 0 * * 2-6"    # post-close ET: day volume
+publish_lag_rule: published_at = capture time (snapshot); as_of = last completed XNYS session at capture time
+backfill: none (history accumulates only from start date)
+rate_limit: ~3 req/s total, 3 workers, retries with exponential backoff
+tos_notes: >
+  Unofficial access to Yahoo Finance. Personal, non-redistributed research use only.
+  Raw data is never committed to the public repo (stored in private R2). Subject to breakage/throttling.

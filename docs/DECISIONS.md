@@ -42,3 +42,14 @@ Verified 2026-10-23 (docs.github.com): standard GitHub-hosted runners are free f
 ## ADR-0003 | 2026-10-23 | accepted | R2 bucket name is `market-weather-actions`
 
 The bucket was created as `market-weather-actions` (ADR-0001 said `market-weather-data`). R2 buckets cannot be renamed; the name carries no meaning, so config follows the actual bucket.
+
+---
+
+## ADR-0004 | 2026-10-23 | accepted | US options snapshot design
+
+- Provider: yfinance (unofficial). Raw = provider DataFrame serialized to Parquet (original HTTP bytes are not exposed by yfinance); one raw object per snapshot per table to minimise R2 Class A ops.
+- Watchlist: initial hand-picked list (`config/universe/options_watchlist.yaml`, ~110 symbols + US theme members). DESIGN §7 "top ~200 by option volume" will be derived from collected data later.
+- Expiries: all within `max_dte_days` (200) + first beyond (term structure). Full chain beyond that is skipped to bound runtime.
+- `as_of` = last completed XNYS session at capture; `published_at` = capture time. A snapshot (as_of, pre|post) is captured once; re-runs skip unless `--force`.
+- Observed 2026-10-23 06:42 UTC (02:42 ET): Yahoo returned OI≈0 and IV=1e-5 placeholders for nearly all contracts (off-hours reset, cause unverified). Quality metrics are computed per snapshot; if >50% OI zero or IV placeholder, silver is written as `*_degraded.parquet` and the snapshot is not considered done (a later run may re-capture). Silver nulls placeholder IV; raw keeps provider values.
+- Snapshot timing (12:30 / 00:30 UTC) to be re-evaluated against observed quality after the first week.
