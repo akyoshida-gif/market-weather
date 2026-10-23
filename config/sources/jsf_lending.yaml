@@ -1,0 +1,13 @@
+source_id: jsf_lending
+version: "0.1.0"
+provider: 日本証券金融 (taisyaku.jp)
+verified_at: "2026-10-23"
+endpoints:
+  zandaka: https://www.taisyaku.jp/data/zandaka.csv   # CP932, 36 cols, latest day only
+  shina: https://www.taisyaku.jp/data/shina.csv       # CP932, header line 4, '*****' = unpriced
+observed_publication_utc: {zandaka_final: "~01:54 next day", shina: "~01:31 next day"}
+schedule_utc: ["0 3 * * 1-5", "30 9 * * 1-5"]
+publish_lag_rule: published_at = capture time (conservative upper bound); as_of = 申込日
+backfill: none (latest day only; archive accumulates from start date)
+rate_limit: 0.5 req/s; one fetch per file per run
+tos_notes: Site policy permits private use only; no redistribution (ADR-0005).

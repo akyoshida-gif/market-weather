@@ -53,3 +53,21 @@ The bucket was created as `market-weather-actions` (ADR-0001 said `market-weathe
 - `as_of` = last completed XNYS session at capture; `published_at` = capture time. A snapshot (as_of, pre|post) is captured once; re-runs skip unless `--force`.
 - Observed 2026-10-23 06:42 UTC (02:42 ET): Yahoo returned OI≈0 and IV=1e-5 placeholders for nearly all contracts (off-hours reset, cause unverified). Quality metrics are computed per snapshot; if >50% OI zero or IV placeholder, silver is written as `*_degraded.parquet` and the snapshot is not considered done (a later run may re-capture). Silver nulls placeholder IV; raw keeps provider values.
 - Snapshot timing (12:30 / 00:30 UTC) to be re-evaluated against observed quality after the first week.
+
+---
+
+## ADR-0005 | 2026-10-23 | accepted | Owner decisions on source ToS and paid plans
+
+- JPX data (short positions, short ratio, margin, investor type): owner judges private analysis without redistribution is not 「二次利用」; use with ≤1 fetch per file per day, never redistribute, never commit data to the public repo.
+- J-Quants: stay on free tier for now (no paid plan). JPX per-issue margin via PDF parse / JSF CSV.
+- Stooq dropped (anti-bot + robots Disallow). US EOD prices: Tiingo free (primary, token required) + yfinance (fallback).
+- Yahoo/yfinance for options: kept running (history accumulates). moomoo OpenAPI under evaluation as a licensed alternative (owner question pending).
+
+---
+
+## ADR-0006 | 2026-10-23 | accepted | moomoo OpenAPI prepared as options provider (disabled)
+
+- Owner prefers a licensed source over Yahoo for options but the moomoo account is not funded yet; yfinance stays primary meanwhile (history must not gap).
+- `MoomooProvider` implements the same ChainProvider protocol; field mapping is UNVERIFIED until a live OpenD test.
+- OpenD holds brokerage credentials → run only on owner PC / self-hosted runner, never on GitHub-hosted runners or with credentials in GitHub Secrets.
+- When enabled: run both providers in parallel for ≥2 weeks, compare quality metrics, then switch (ADR).

@@ -29,3 +29,10 @@ Check `registry/runs/` summaries for `quality` and `degraded`.
 
 ## Keepalive
 `keepalive.yml` re-enables all workflows monthly (public repos disable schedules after inactivity).
+
+## Japan daily (jp_daily)
+Schedules 03:00 & 09:30 UTC Mon–Fri. JSF CSVs hold the latest day only — a missed day is lost; the 09:30 run is a retry.
+JPX short positions backfill (~13 months): Actions → jp_daily → Run workflow (sources=jpx_short_positions, backfill=true).
+
+## moomoo (disabled)
+See config/sources/us_options_moomoo.yaml and ADR-0006. Requires OpenD on owner PC.
