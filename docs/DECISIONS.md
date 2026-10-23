@@ -62,3 +62,12 @@ The bucket was created as `market-weather-actions` (ADR-0001 said `market-weathe
 - J-Quants: stay on free tier for now (no paid plan). JPX per-issue margin via PDF parse / JSF CSV.
 - Stooq dropped (anti-bot + robots Disallow). US EOD prices: Tiingo free (primary, token required) + yfinance (fallback).
 - Yahoo/yfinance for options: kept running (history accumulates). moomoo OpenAPI under evaluation as a licensed alternative (owner question pending).
+
+---
+
+## ADR-0006 | 2026-10-23 | accepted | moomoo OpenAPI prepared as options provider (disabled)
+
+- Owner prefers a licensed source over Yahoo for options but the moomoo account is not funded yet; yfinance stays primary meanwhile (history must not gap).
+- `MoomooProvider` implements the same ChainProvider protocol; field mapping is UNVERIFIED until a live OpenD test.
+- OpenD holds brokerage credentials → run only on owner PC / self-hosted runner, never on GitHub-hosted runners or with credentials in GitHub Secrets.
+- When enabled: run both providers in parallel for ≥2 weeks, compare quality metrics, then switch (ADR).

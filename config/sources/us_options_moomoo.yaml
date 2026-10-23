@@ -1,0 +1,13 @@
+source_id: us_options_chain   # same silver tables; provider swap only
+provider: moomoo OpenAPI (OpenD gateway)
+enabled: false                # owner account not funded yet (ADR-0006)
+verified_at: "2026-10-23"     # docs only; live API not yet tested
+requirements:
+  - moomoo account with total assets > 0 USD (free US options LV1 quotes), else paid OPRA
+  - OpenD running on owner PC (or self-hosted runner); never on GitHub-hosted runners
+  - pip package: moomoo-api
+rate_limits: {option_chain: "10 req / 30 s, span <= 30 days", snapshot: "60 req / 30 s, 400 codes"}
+docs:
+  - https://openapi.moomoo.com/moomoo-api-doc/en/intro/authority.html
+  - https://openapi.moomoo.com/moomoo-api-doc/en/quote/get-option-chain.html
+  - https://openapi.moomoo.com/moomoo-api-doc/en/quote/get-market-snapshot.html

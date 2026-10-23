@@ -4,8 +4,6 @@ on:
   schedule:
     - cron: "0 3 * * 1-5"    # JSF final (確報) ~02:00 UTC
     - cron: "30 9 * * 1-5"   # JSF retry + JPX short positions (~08:00 UTC)
-  push:
-    branches: [phase1/jp-sources]  # TEMP: test before merge
   workflow_dispatch:
     inputs:
       sources:
