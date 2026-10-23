@@ -23,5 +23,9 @@ All jobs are date-parameterized and idempotent. Use Actions → workflow → "Ru
 `registry/storage_usage.json` holds monthly Class A/B op counts and last known bucket size.
 Above soft limits, non-exempt writes raise `StorageGuardError` (ledger/ and registry/ exempt).
 
+## US options snapshots
+Workflow `us_options` (pre 12:30 UTC Mon–Fri, post 00:30 UTC Tue–Sat). Manual: Actions → us_options → Run workflow (snapshot, limit, force).
+Check `registry/runs/` summaries for `quality` and `degraded`.
+
 ## Keepalive
 `keepalive.yml` re-enables all workflows monthly (public repos disable schedules after inactivity).

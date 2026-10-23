@@ -1,0 +1,7 @@
+# Theme baskets (owner-editable). Equal-weight and cap-weight variants are computed downstream.
+AI_INFRA_NEOCLOUD: [IREN, CRWV, NBIS, APLD, CORZ, WULF, CIFR]
+AI_POWER: [VRT, GEV, BE, CEG, VST, TLN, ETN]
+SEMIS: [NVDA, AMD, AVGO, TSM, MU, INTC, QCOM, MRVL, ARM, LRCX, AMAT, KLAC, ASML]
+MEMORY: [MU, WDC, STX, SNDK]
+JP_SEMI_EQUIP: ["8035.T", "6857.T", "6146.T", "7735.T", "6920.T", "4063.T", "6526.T"]
+JP_POWER_INFRA: ["6501.T", "6503.T", "6504.T", "1963.T", "9501.T", "6367.T"]
