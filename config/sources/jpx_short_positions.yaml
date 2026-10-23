@@ -1,0 +1,15 @@
+source_id: jpx_short_positions
+version: "0.1.0"
+provider: JPX 空売り残高報告
+verified_at: "2026-10-23"
+endpoints:
+  index: https://www.jpx.co.jp/markets/public/short-selling/index.html
+  archives: https://www.jpx.co.jp/markets/public/short-selling/00-archives-{01..12}.html
+  file_pattern: /markets/public/short-selling/{opaque-id}-att/YYYYMMDD_Short_Positions.xls
+format: XLS (BIFF, cp932), header rows 6-7, data from row 8, columns B..P
+observed_publication_utc: "~08:00 (17:00 JST target)"
+schedule_utc: ["30 9 * * 1-5"]
+publish_lag_rule: disclosure date 09:00 UTC; HTTP Last-Modified if later and within 7 days
+backfill: ~13 months via archive pages (workflow_dispatch backfill=true)
+rate_limit: 0.5 req/s; each file fetched once (skip if silver exists)
+tos_notes: JPX terms forbid secondary use/redistribution; owner decision ADR-0005 (private analysis only).
