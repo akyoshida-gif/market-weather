@@ -4,7 +4,7 @@ storage:
   backend: local
   local_root: ./data
   r2:
-    bucket: market-weather-data
+    bucket: market-weather-actions
     # endpoint / credentials from env: R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
   # App-side cost guard (ADR-0001). R2 free tier: 10 GB, 1M Class A, 10M Class B per month.
   guard:

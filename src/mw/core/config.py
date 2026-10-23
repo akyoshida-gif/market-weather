@@ -21,7 +21,7 @@ class GuardSettings(BaseModel):
 
 
 class R2Settings(BaseModel):
-    bucket: str = "market-weather-data"
+    bucket: str = "market-weather-actions"
 
 
 class StorageSettings(BaseModel):

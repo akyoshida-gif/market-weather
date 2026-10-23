@@ -36,3 +36,9 @@ Verified 2026-10-23 (docs.github.com): standard GitHub-hosted runners are free f
 - `raw/` and `ledger/forecasts/` are write-once at the storage layer (`GuardedStorage`), enforcing P2/P3.
 - Run summaries are written as one object per run under `registry/runs/dt=.../` instead of appending to a single `runs.jsonl` (object stores have no append; avoids read-modify-write races). A compaction job may later build `runs.jsonl`.
 - Keepalive implemented by re-enabling workflows via `gh workflow enable` (no dummy commits).
+
+---
+
+## ADR-0003 | 2026-10-23 | accepted | R2 bucket name is `market-weather-actions`
+
+The bucket was created as `market-weather-actions` (ADR-0001 said `market-weather-data`). R2 buckets cannot be renamed; the name carries no meaning, so config follows the actual bucket.
