@@ -136,7 +136,11 @@ def ingest_file(storage: GuardedStorage, http: HttpClient, link: FileLink) -> di
     last_modified = parsedate_to_datetime(lm_header).astimezone(UTC) if lm_header else None
     df = parse_xls(resp.content)
     ingested_at = datetime.now(UTC)
-    rk = raw_key(SOURCE_ID, ingested_at, f"{link.disclosure_date:%Y%m%d}_Short_Positions.xls")
+    rk = raw_key(
+        SOURCE_ID,
+        ingested_at,
+        f"{link.disclosure_date:%Y%m%d}_Short_Positions_{ingested_at:%H%M%S}.xls",
+    )
     sha = write_raw_bytes(storage, rk, resp.content)
     silver = stamp_pit(
         df.with_columns(

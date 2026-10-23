@@ -84,7 +84,7 @@ def ingest_regsho_day(storage: GuardedStorage, http: HttpClient, d: date) -> dic
     if df.height == 0 or df["trade_date"].unique().to_list() != [d]:
         raise ValueError(f"unexpected trade dates in file for {d}")
     ingested_at = datetime.now(UTC)
-    rk = raw_key(REGSHO_ID, ingested_at, f"CNMSshvol{d:%Y%m%d}.txt")
+    rk = raw_key(REGSHO_ID, ingested_at, f"CNMSshvol{d:%Y%m%d}_{ingested_at:%H%M%S}.txt")
     sha = write_raw_bytes(storage, rk, data)
     silver = stamp_pit(
         df.with_columns((pl.lit("US:") + pl.col("symbol")).alias("entity_id")),
@@ -163,7 +163,7 @@ def ingest_si(storage: GuardedStorage, http: HttpClient, settle: date) -> dict[s
     data = _get(http, SI_URL.format(d=settle))
     df = parse_short_interest(data)
     captured = datetime.now(UTC)
-    rk = raw_key(SI_ID, captured, f"shrt{settle:%Y%m%d}.csv")
+    rk = raw_key(SI_ID, captured, f"shrt{settle:%Y%m%d}_{captured:%H%M%S}.csv")
     sha = write_raw_bytes(storage, rk, data)
     silver = stamp_pit(
         df.with_columns((pl.lit("US:") + pl.col("symbol")).alias("entity_id")),

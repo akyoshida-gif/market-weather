@@ -52,7 +52,7 @@ def ingest(storage: GuardedStorage, http: HttpClient, since_days: int | None) ->
     for sym in SYMBOLS:
         resp = http.get(URL.format(sym=sym))
         resp.raise_for_status()
-        rk = raw_key(SOURCE_ID, ingested_at, f"{sym}_History.csv")
+        rk = raw_key(SOURCE_ID, ingested_at, f"{sym}_History_{ingested_at:%H%M%S}.csv")
         sha = write_raw_bytes(storage, rk, resp.content)
         df = parse(sym, resp.content)
         if since_days is not None:
