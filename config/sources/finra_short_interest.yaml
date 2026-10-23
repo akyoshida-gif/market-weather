@@ -1,0 +1,9 @@
+source_id: finra_short_interest
+version: "0.1.0"
+verified_at: "2026-10-23"
+endpoint: https://cdn.finra.org/equity/otcmarket/biweekly/shrt{YYYYMMDD}.csv  # pipe-delimited, quoted
+settlement_dates: 15th (or prior session) and last session of month
+publish_lag_rule: min(capture time, settlement + 7 XNYS sessions 23:59 UTC)
+history: ~5 rolling years
+risk: FINRA proposal to move to weekly reporting (status UNVERIFIED) -> stale alert after 35 days
+tos_notes: public FINRA data; personal use.

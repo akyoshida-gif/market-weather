@@ -47,3 +47,38 @@ def stamp_pit(
         pl.lit(source_version).alias("source_version"),
         pl.lit(raw_ref).alias("raw_ref"),
     )
+
+
+def year_key(table: str, market: str, year: int) -> str:
+    return f"silver/{table}/market={market}/year={year}/data.parquet"
+
+
+def upsert_timeseries(
+    storage: GuardedStorage,
+    table: str,
+    market: str,
+    df: pl.DataFrame,
+    key_cols: tuple[str, ...] = ("entity_id", "as_of"),
+) -> dict[int, int]:
+    """Merge rows into year-partitioned silver files (one object per year; few R2 ops).
+
+    New rows win on key collision (latest ingestion). Raw keeps every vintage, so silver may be
+    rewritten. Returns {year: row_count_after}.
+    """
+    out: dict[int, int] = {}
+    if df.height == 0:
+        return out
+    df = df.with_columns(pl.col("as_of").dt.year().alias("_year"))
+    for (year,), part in df.group_by("_year"):
+        y = int(str(year))
+        key = year_key(table, market, y)
+        part = part.drop("_year")
+        if storage.exists(key):
+            old = storage.read_parquet(key)
+            part = pl.concat([old, part], how="diagonal_relaxed")
+        merged = part.unique(subset=list(key_cols), keep="last", maintain_order=True).sort(
+            list(key_cols)
+        )
+        storage.write_parquet(key, merged)
+        out[y] = merged.height
+    return out

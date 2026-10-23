@@ -1,0 +1,45 @@
+# US/global daily ingest: FINRA Reg SHO + short interest, Cboe vol indices, FRED.
+name: us_daily
+on:
+  schedule:
+    - cron: "30 2 * * 2-6"   # after Cboe (~01:30 UTC) and FINRA Reg SHO (<=23:00 UTC)
+    - cron: "0 14 * * 1-5"   # retry / catch late publications (idempotent)
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: "comma-separated: finra_regsho,finra_si,cboe_vol,fred"
+        required: false
+        default: "finra_regsho,finra_si,cboe_vol,fred"
+      backfill_days:
+        description: "e.g. 750 for ~2y Reg SHO; empty = daily mode"
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: us_daily
+  cancel-in-progress: false
+jobs:
+  ingest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      MW_STORAGE_BACKEND: r2
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Ingest
+        env:
+          IN_SOURCES: ${{ inputs.sources }}
+          IN_BACKFILL: ${{ inputs.backfill_days }}
+        run: |
+          ARGS="--sources ${IN_SOURCES:-finra_regsho,finra_si,cboe_vol,fred}"
+          [ -n "$IN_BACKFILL" ] && ARGS="$ARGS --backfill-days $IN_BACKFILL"
+          echo "args: $ARGS"
+          uv run python -m jobs.us_daily $ARGS

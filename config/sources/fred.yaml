@@ -1,0 +1,8 @@
+source_id: fred
+version: "0.1.0"
+verified_at: "2026-10-23"
+endpoint: https://api.stlouisfed.org/fred/series/observations (api_key from secret FRED_API_KEY)
+series: see src/mw/ingest/macro/fred.py SERIES (publish lag days per series)
+publish_lag_rule: as_of + lag_days at 23:00 UTC
+notes: ICE BofA series keep only 3 rolling years on FRED since 2026-04 -> archived in silver/raw.
+tos_notes: personal use OK; avoid unreasonable bandwidth (Crawl-delay 1).

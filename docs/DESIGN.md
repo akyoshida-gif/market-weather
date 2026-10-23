@@ -119,7 +119,7 @@ Layer naming: raw (bronze) → silver → gold. Query engine: DuckDB over Parque
 │   └── models/                   # model specs, promotion gates
 ├── src/mw/                       # python package "mw" (market weather)
 │   ├── core/                     # storage backend, PIT utils, calendars, logging, http client w/ rate limit
-│   ├── ingest/{us,jp,global}/    # source adapters
+│   ├── ingest/{us,jp,macro}/     # source adapters ("global" is a Python keyword; ADR-0007)
 │   ├── normalize/
 │   ├── quality/                  # schema validation (pandera), anomaly checks, source health
 │   ├── universe/

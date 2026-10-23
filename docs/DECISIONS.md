@@ -71,3 +71,12 @@ The bucket was created as `market-weather-actions` (ADR-0001 said `market-weathe
 - `MoomooProvider` implements the same ChainProvider protocol; field mapping is UNVERIFIED until a live OpenD test.
 - OpenD holds brokerage credentials → run only on owner PC / self-hosted runner, never on GitHub-hosted runners or with credentials in GitHub Secrets.
 - When enabled: run both providers in parallel for ≥2 weeks, compare quality metrics, then switch (ADR).
+
+---
+
+## ADR-0007 | 2026-10-23 | accepted | Phase 1 US/macro ingest details
+
+- Package `mw.ingest.global` renamed to `mw.ingest.macro` (`global` is a Python keyword).
+- Small time series (vol indices, FRED) stored as year-partitioned silver files (`silver/{table}/market=.../year=YYYY/data.parquet`), upserted by (entity_id, as_of); large cross-sections (Reg SHO, short interest, options) stored per date.
+- FRED: latest values with per-series conservative publish lag; ALFRED vintages deferred (revisions are rare for these series).
+- FRED request errors are re-raised without URL (the URL contains the API key).
