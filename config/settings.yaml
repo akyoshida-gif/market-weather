@@ -1,0 +1,27 @@
+# Global settings. Secrets are NEVER stored here; they come from environment variables.
+storage:
+  # "local" for dev/CI, "r2" for production (Actions with secrets).
+  backend: local
+  local_root: ./data
+  r2:
+    bucket: market-weather-data
+    # endpoint / credentials from env: R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+  # App-side cost guard (ADR-0001). R2 free tier: 10 GB, 1M Class A, 10M Class B per month.
+  guard:
+    soft_limit_bytes: 8000000000
+    soft_limit_class_a_per_month: 800000
+    soft_limit_class_b_per_month: 8000000
+    # Prefixes allowed to write even above soft limits (still below free-tier hard limit).
+    exempt_prefixes: ["ledger/", "registry/"]
+
+markets:
+  US:
+    calendar: XNYS
+    timezone: America/New_York
+    benchmark: ETF:US:SPY
+  JP:
+    calendar: XTKS
+    timezone: Asia/Tokyo
+    benchmark: ETF:JP:1306
+
+horizons: [1, 5, 20, 60]

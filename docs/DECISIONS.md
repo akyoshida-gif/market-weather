@@ -26,3 +26,13 @@ Verified 2026-10-23 (docs.github.com): standard GitHub-hosted runners are free f
 ### Consequences
 - Public scheduled workflows are disabled after ~60 days of repo inactivity (unverified in official docs) → keepalive workflow required.
 - Fork PRs must not have access to secrets (default GitHub behavior; do not use `pull_request_target`).
+
+---
+
+## ADR-0002 | 2026-10-23 | accepted | Phase 0 implementation choices
+
+- Python pinned to 3.12 (`.python-version`); `requires-python >=3.11,<3.14` for library compatibility (local machine has 3.14; uv provisions 3.12).
+- `GitRepoFS` backend not implemented: Option B (ADR-0001) never stores data in the repo. Backends: `LocalFS`, `S3Compatible` (R2).
+- `raw/` and `ledger/forecasts/` are write-once at the storage layer (`GuardedStorage`), enforcing P2/P3.
+- Run summaries are written as one object per run under `registry/runs/dt=.../` instead of appending to a single `runs.jsonl` (object stores have no append; avoids read-modify-write races). A compaction job may later build `runs.jsonl`.
+- Keepalive implemented by re-enabling workflows via `gh workflow enable` (no dummy commits).
