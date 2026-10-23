@@ -1,0 +1,36 @@
+# Phase 0 acceptance: write/read PIT parquet via the storage backend inside Actions.
+# Uses R2 when secrets are configured, otherwise the local backend.
+name: smoke
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Session date (YYYY-MM-DD); empty = previous US session"
+        required: false
+  schedule:
+    - cron: "17 3 * * 1"  # weekly
+permissions:
+  contents: read
+concurrency:
+  group: smoke
+  cancel-in-progress: false
+jobs:
+  dummy-pit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Run dummy PIT job
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          INPUT_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$R2_ACCESS_KEY_ID" ]; then export MW_STORAGE_BACKEND=r2; else export MW_STORAGE_BACKEND=local; fi
+          echo "backend=$MW_STORAGE_BACKEND"
+          if [ -n "$INPUT_DATE" ]; then uv run python -m jobs.dummy_pit --date "$INPUT_DATE"; else uv run python -m jobs.dummy_pit; fi

@@ -1,0 +1,20 @@
+# Public repos: scheduled workflows are disabled after ~60 days without activity (ADR-0001).
+# Re-enable every scheduled workflow monthly without creating commits.
+name: keepalive
+on:
+  schedule:
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+permissions:
+  actions: write
+jobs:
+  keepalive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in $(gh workflow list --repo "$GITHUB_REPOSITORY" --all --json path --jq '.[].path'); do
+            gh workflow enable "$(basename "$wf")" --repo "$GITHUB_REPOSITORY" || true
+          done
