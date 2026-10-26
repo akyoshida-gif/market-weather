@@ -17,6 +17,7 @@ dependencies = [
     "openpyxl>=3.1",
     "lightgbm>=4.3",
     "scikit-learn>=1.4",
+    "lxml>=5.0",
 ]
 
 [dependency-groups]
@@ -67,3 +68,6 @@ pythonpath = ["src", "."]
 "src/mw/strategy/*" = ["E501", "E731"]
 "src/mw/paper/*" = ["E501"]
 "jobs/build_dashboard.py" = ["E501"]
+"jobs/reference_data.py" = ["E501"]
+"src/mw/ingest/us/sec_reference.py" = ["E501"]
+"tests/*" = ["E501"]
