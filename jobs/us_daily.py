@@ -35,6 +35,7 @@ def run_regsho(
             if d >= today - timedelta(days=backfill_days)
         ]
     )
+    days = [d for d in days if d >= date(2018, 8, 1)]  # FINRA consolidated (CNMS) files start here
     done, pending, errors = [], [], {}
     for d in days:
         try:

@@ -96,7 +96,9 @@ def _tsv(z: zipfile.ZipFile, name: str, cols: list[str]) -> pl.DataFrame:
         encoding="utf8-lossy",
     )
     df.columns = [c.strip().upper() for c in df.columns]
-    return df.select([c for c in cols if c in df.columns])
+    # older quarterly files lack some columns (e.g. AFF10B5ONE was added later): fill with null
+    missing = [pl.lit(None, dtype=pl.String).alias(c) for c in cols if c not in df.columns]
+    return df.with_columns(missing).select(cols)
 
 
 def parse_insider(data: bytes) -> pl.DataFrame:

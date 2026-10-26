@@ -75,3 +75,13 @@ def test_sp500_intervals_walk_back():
     iv = sp500.intervals(cur, ch, date(2020, 1, 1))
     assert sp500.members_on(iv, date(2023, 6, 1)) == ["AAA", "OLD"]
     assert sp500.members_on(iv, date(2024, 6, 1)) == ["AAA", "BBB"]
+
+
+def test_insider_old_layout_without_10b5_column():
+    sub = "ACCESSION_NUMBER\tFILING_DATE\tDOCUMENT_TYPE\tISSUERCIK\tISSUERTRADINGSYMBOL\nA1\t15-MAR-2008\t4\t123\tabc\n"
+    own = "ACCESSION_NUMBER\tRPTOWNERCIK\tRPTOWNERNAME\tRPTOWNER_RELATIONSHIP\tRPTOWNER_TITLE\nA1\t9\tDoe\tDirector\t\n"
+    tr = "ACCESSION_NUMBER\tTRANS_DATE\tTRANS_CODE\tTRANS_SHARES\tTRANS_PRICEPERSHARE\tTRANS_ACQUIRED_DISP_CD\tSHRS_OWND_FOLWNG_TRANS\tDIRECT_INDIRECT_OWNERSHIP\nA1\t14-MAR-2008\tP\t500\t3\tA\t900\tD\n"
+    df = R.parse_insider(
+        _zip({"SUBMISSION.tsv": sub, "REPORTINGOWNER.tsv": own, "NONDERIV_TRANS.tsv": tr})
+    )
+    assert df.height == 1 and df["plan_10b5_1"][0] is None and df["code"][0] == "P"

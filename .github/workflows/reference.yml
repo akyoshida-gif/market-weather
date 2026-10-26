@@ -3,6 +3,8 @@ name: reference
 on:
   schedule:
     - cron: "20 5 * * 6"   # weekly (Saturday)
+  push:
+    branches: [fix/backfill-edge-cases]  # 一時：マージ前の試験
   workflow_dispatch:
     inputs:
       sources:
@@ -41,6 +43,7 @@ jobs:
           IN_BACKFILL: ${{ inputs.backfill }}
         run: |
           ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares}"
+          [ "$EVENT" = "push" ] && ARGS="--sources insider" && IN_BACKFILL=true  # 一時：試験
           [ "$IN_BACKFILL" = "true" ] && ARGS="$ARGS --backfill"
           echo "args: $ARGS"
           uv run python -m jobs.reference_data $ARGS
