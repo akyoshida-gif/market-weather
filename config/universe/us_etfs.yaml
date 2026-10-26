@@ -1,0 +1,6 @@
+# ETFs tracked alongside US common stocks (DESIGN §7). Owner-editable.
+broad: [SPY, RSP, QQQ, IWM, DIA, MDY, IJR]
+sectors: [XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU, XLRE, XLC]
+industries: [SMH, SOXX, IGV, XBI, IBB, KRE, KBE, ITB, XHB, XRT, XOP, OIH, GDX, GDXJ, TAN, URA, ITA, JETS, IYT, PAVE, GRID, ARKK, BLOK, IPO]
+factors: [MTUM, QUAL, USMV, VLUE, IWF, IWD, IWO, IWN]
+cross_asset: [TLT, IEF, SHY, HYG, LQD, GLD, SLV, USO, UNG, UUP, FXY, EEM, EFA, EWJ, FXI]
