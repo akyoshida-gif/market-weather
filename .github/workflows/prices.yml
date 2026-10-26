@@ -4,8 +4,6 @@ on:
   schedule:
     - cron: "30 21 * * 1-5"  # US: after 16:00 ET close (EDT 20:00 / EST 21:00 UTC) + lag
     - cron: "30 7 * * 1-5"   # JP: after 15:30 JST close (06:30 UTC) + lag
-  push:
-    branches: [phase1/prices-universe]  # TEMP: test before merge
   workflow_dispatch:
     inputs:
       market:
@@ -47,7 +45,6 @@ jobs:
           IN_LIMIT: ${{ inputs.limit }}
         run: |
           if [ "$SCHED" = "30 7 * * 1-5" ]; then MARKET=JP; else MARKET="${IN_MARKET:-US}"; fi
-          [ "$EVENT" = "push" ] && IN_LIMIT=400
           ARGS="--market $MARKET"
           [ -n "$IN_START" ] && ARGS="$ARGS --start $IN_START"
           [ -n "$IN_LIMIT" ] && ARGS="$ARGS --limit $IN_LIMIT"
