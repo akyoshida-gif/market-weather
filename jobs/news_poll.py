@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import json
 import sys
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -116,6 +117,12 @@ def run_sec_backfill(
             data = sec.get(sec_filings.SUBMISSIONS.format(cik=cik))
             raws.append(data)
             rows = sec_filings.parse_submissions(data, since)
+            company = str(json.loads(data).get("name", ""))
+            # filings older than the ~1,000 most recent live in extra files
+            for name in sec_filings.older_files(data, since):
+                extra = sec.get(sec_filings.OLDER.format(name=name))
+                raws.append(extra)
+                rows += sec_filings.parse_older(extra, int(cik), company, since)
             done += 1
         except Exception:
             errors += 1
