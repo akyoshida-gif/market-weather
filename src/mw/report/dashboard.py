@@ -35,11 +35,13 @@ ITEM_NAMES = {"1.01": "重要な契約", "1.02": "契約終了", "1.03": "破産
               "9.01": "財務諸表・添付資料"}  # fmt: skip
 
 
-def _read_many(storage: GuardedStorage, keys: list[str]) -> pl.DataFrame:
+def _read_many(
+    storage: GuardedStorage, keys: list[str], columns: list[str] | None = None
+) -> pl.DataFrame:
     if not keys:
         return pl.DataFrame()
     with ThreadPoolExecutor(max_workers=16) as ex:
-        frames = list(ex.map(storage.read_parquet, sorted(keys)))
+        frames = list(ex.map(lambda k: storage.read_parquet(k, columns=columns), sorted(keys)))
     return pl.concat(frames, how="diagonal_relaxed")
 
 
