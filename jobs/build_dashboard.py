@@ -19,6 +19,7 @@ from mw.core.storage import open_storage
 from mw.ingest.us.options_chain import load_watchlist
 from mw.report import dashboard as D
 from mw.signals import rules
+from mw.strategy import engine, select
 
 TEMPLATE = (
     Path(__file__).resolve().parent.parent
@@ -74,9 +75,45 @@ def main() -> None:
             sectors = D.JP_SECTORS
             min_dvol = 100_000_000.0
         sp = D.signal_payload(prices, market, min_dvol)
-        # add the most liquid of today's signals to the detail set
-        today_ids = sorted(sp["today"], key=lambda r: -(r["dvol"] or 0))
-        detail = list(dict.fromkeys(detail + [r["id"] for r in today_ids[:60]]))
+        # strategies: backtest, adoption gate, today's picks (adopted only)
+        ind = engine.indicators(
+            prices.select("entity_id", "as_of", "open", "high", "low", "close", "volume", "splits"),
+            D.BENCH[market],
+        )
+        res = select.run(ind, market, D.BENCH[market])
+        asof_d = ind["as_of"].max()
+        strat_out, picks_out, adopted_keys = [], [], []
+        for fam in res["families"]:
+            key = fam["strategy"]["key"]
+            item = {k: v for k, v in fam.items()}
+            if fam["adopted"]:
+                adopted_keys.append(key)
+                item["detail"] = select.detail(res["trades"], key)
+                for pk in select.picks(ind, res["strategies"][key], asof_d):
+                    picks_out.append(
+                        {
+                            **pk,
+                            "strategy": key,
+                            "family": fam["family"],
+                            "label": fam["strategy"]["label"],
+                            "horizon": fam["strategy"]["horizon"],
+                            "side": fam["strategy"]["side"],
+                            "max_hold": fam["strategy"]["max_hold"],
+                            "name": names.get(pk["id"], ""),
+                        }
+                    )
+            strat_out.append(item)
+        detail = list(dict.fromkeys(detail + [p["id"] for p in picks_out]))
+        recent_ids = (
+            res["trades"]
+            .filter(pl.col("strategy").is_in(adopted_keys))
+            .sort("exit_date")
+            .tail(40)["entity_id"]
+            .to_list()
+            if adopted_keys
+            else []
+        )
+        detail = list(dict.fromkeys(detail + recent_ids))
         detail = [d for d in detail if d in set(prices["entity_id"].unique().to_list())]
         ev = sp["events"].filter(pl.col("entity_id").is_in(detail))
         marks: dict[str, list[list[str]]] = {}
@@ -98,7 +135,32 @@ def main() -> None:
             "names": {d: names.get(d, "") for d in detail},
             "sectors": {d: (sectors.get(d.split(":")[1]) or sec_of.get(d, "")) for d in detail},
             "universe_size": int((uni["kind"] == "common").sum()),
+            "strategies": strat_out,
+            "picks": picks_out,
         }
+        tt = (
+            res["trades"].filter(
+                pl.col("strategy").is_in(adopted_keys) & pl.col("entity_id").is_in(detail)
+            )
+            if adopted_keys
+            else pl.DataFrame()
+        )
+        m["trades"] = {}
+        for r in tt.iter_rows(named=True) if tt.height else []:
+            m["trades"].setdefault(r["entity_id"], []).append(
+                [
+                    r["entry_date"].isoformat(),
+                    r["exit_date"].isoformat(),
+                    r["strategy"].split("|")[0],
+                    r["entry"],
+                    r["exit"],
+                    r["stop"],
+                    r["target"],
+                    round(r["ret"], 4),
+                    r["reason"],
+                ]
+            )
+        m["family_labels"] = {f["family"]: f["strategy"]["label"] for f in strat_out}
         if market == "US":
             m["options"] = {k: v for k, v in D.options_summary(storage).items() if k in detail}
             m["short_vol"] = D.finra_short(storage, detail, since60)
@@ -123,7 +185,7 @@ def main() -> None:
             m["jp_short"] = D.jp_short_positions(storage, detail)
             m["jsf"] = D.jsf_latest(storage, detail)
         payload["markets"][market] = m
-        print(market, "detail", len(detail), "signals today", len(sp["today"]))
+        print(market, "detail", len(detail), "picks", len(picks_out), "adopted", adopted_keys)
 
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
     html = TEMPLATE.read_text(encoding="utf-8").replace(

@@ -105,3 +105,15 @@ Owner direction (2026-10-26): focus on US incl. small caps / penny stocks; JP sc
 
 - Nasdaq earnings API not used (robots Disallow:/; ToS bans automated capture and ML use). Owner agreed.
 - Actual earnings release time = SEC 8-K Item 2.02 acceptance/dissemination time (to the second). Next earnings date = estimated from each company's historical cadence (~quarterly). Analyst EPS consensus / surprise not available (accepted limitation).
+
+---
+
+## ADR-0011 | 2026-10-26 | accepted | Trade-level strategy backtests with an adoption gate
+
+Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal time, evaluated as real trades (not fixed 10-day returns), and only clear, validated signals shown.
+- Engine (`mw.strategy.engine`): next-open (or limit) entry, stop-first when both levels touch in one bar, gap fills at the open, time stop, optional close-based exit rule, conservative round-trip costs (US: 10/30/100 bps by price; JP 20 bps).
+- Data quality: Yahoo prices contain split artefacts / bad prints (US: 5,582 one-day moves >50%). Signals within 5 sessions after, and trades spanning, a split event or a >60% one-day move are excluded.
+- Protocol: parameters chosen on 2021-10..2023 (train) + 2024 (valid); adoption requires PF > 1.05, positive average, >= 30 trades in train, valid AND test (2025-, never used for selection).
+- Results (2026-10-26): US adopted = spike fade (short); JP adopted = squeeze breakout, news gap continuation. Rejected: RSI2 pullback, momentum, squeeze breakout (US), gap continuation (US), index trend.
+- Meta-labelling (LightGBM over long candidates) was not stable across valid/test (dominated by market-level features) → not adopted yet.
+- Known gaps: short borrow availability/fees not modelled; portfolio-level capital constraints not modelled; survivorship bias (current listings only).
