@@ -1,0 +1,42 @@
+# Daily paper (demo) trading. Runs after the prices workflow; idempotent per session (retries are no-ops).
+name: paper
+on:
+  schedule:
+    - cron: "40 22 * * 1-5"  # US (prices at 21:30 UTC)
+    - cron: "40 23 * * 1-5"  # US retry
+    - cron: "40 8 * * 1-5"   # JP (prices at 07:30 UTC)
+    - cron: "40 10 * * 1-5"  # JP retry
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "US | JP"
+        required: true
+        default: US
+permissions:
+  contents: read
+concurrency:
+  group: paper-${{ inputs.market || github.event.schedule }}
+  cancel-in-progress: false
+jobs:
+  trade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MW_STORAGE_BACKEND: r2
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Trade
+        env:
+          SCHED: ${{ github.event.schedule }}
+          IN_MARKET: ${{ inputs.market }}
+        run: |
+          case "$SCHED" in "40 8 * * 1-5"|"40 10 * * 1-5") MARKET=JP;; "") MARKET="$IN_MARKET";; *) MARKET=US;; esac
+          echo "market: $MARKET"
+          uv run python -m jobs.paper_trade --market $MARKET
