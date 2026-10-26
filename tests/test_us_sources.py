@@ -94,3 +94,34 @@ def test_upsert_timeseries(tmp_path):
     y26 = s.read_parquet(year_key("t", "US", 2026))
     assert y26["v"].to_list() == [3]
     assert s.read_parquet(year_key("t", "US", 2025))["v"].to_list() == [1]
+
+
+def test_cboe_ingest_twice_same_day(tmp_path, monkeypatch):
+    """Daily schedule runs twice a day; raw keys must not collide (regression)."""
+    import itertools
+
+    from mw.ingest.us import cboe as cb
+
+    class Resp:
+        content = b"DATE,OPEN,HIGH,LOW,CLOSE\n10/22/2026,1,1,1,19.0\n"
+
+        def raise_for_status(self):
+            return None
+
+    class Http:
+        def get(self, url):
+            return Resp()
+
+    times = itertools.count()
+    real = cb.datetime
+
+    class FakeDT(real):
+        @classmethod
+        def now(cls, tz=None):
+            return real(2026, 10, 23, 2, 30, next(times), tzinfo=UTC)
+
+    monkeypatch.setattr(cb, "datetime", FakeDT)
+    s = GuardedStorage(LocalFS(tmp_path), GuardSettings())
+    cb.ingest(s, Http(), since_days=None)
+    cb.ingest(s, Http(), since_days=None)
+    assert len(s.list("raw/vol_indices/")) == 12
