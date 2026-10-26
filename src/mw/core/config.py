@@ -43,8 +43,21 @@ class Settings(BaseModel):
     horizons: list[int] = Field(default_factory=lambda: [1, 5, 20, 60])
 
 
+def load_env_file(path: Path) -> None:
+    """Load KEY=VALUE lines into os.environ (existing vars win). Values are never logged."""
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"'))
+
+
 def load_settings(path: Path | None = None) -> Settings:
     """Load settings.yaml; env MW_STORAGE_BACKEND / MW_LOCAL_ROOT override storage."""
+    env_file = os.environ.get("MW_ENV_FILE")
+    if env_file:
+        load_env_file(Path(env_file))
     p = path or Path(os.environ.get("MW_SETTINGS", DEFAULT_SETTINGS))
     raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     settings = Settings.model_validate(raw)
