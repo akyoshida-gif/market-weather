@@ -126,3 +126,9 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 - Regime research (20 US / 12 JP filters, singles and pairs, ~1,700 combinations): most filters that improved train+valid failed on test (overfitting). Credit-easing regimes (US HY spread tightening) helped longs in both markets, but ICE HY data on FRED covers only 3 years -> evidence thin; BAA10Y (full history) added for re-validation.
 - Because backtests cannot settle it, adopted strategies and promising candidates run in **forward-only paper trading** (one virtual book per strategy; USD 100k / JPY 10M; 1% risk per trade, max 10% per position, max 10 positions; same fills/costs as the backtest). Config: `config/strategies/paper.yaml`. State: `paper/{market}/state.json`, events `paper/{market}/events/`.
 - Promotion/demotion will be decided by live results (weekly review job, next).
+## ADR-0012 | 2026-10-26 | accepted | Macro data expansion; SEC backfill batching
+
+- Owner: long-only focus; test macro/cross-asset/flow information (money supply, oil, short/long rates, bonds, defensive vs risk-on sectors, options, margin balances).
+- FRED series added: DGS3MO, DGS1, DGS5, T10Y3M, SOFR, RRPONTSYD, BAA10Y, WALCL, WTREGEN, M2SL, ICSA, CPIAUCSL, UNRATE, INDPRO, UMCSENT, PCOPPUSDM, DHHNGSP. Monthly series get conservative publication lags (days after the 1st of the month: M2 55, CPI 45, UNRATE 40, INDPRO 48, UMCSENT 35, copper 45). Latest vintage only (revisions not modelled; small for these series).
+- Cross-asset regime features (defensive vs cyclical sector ratio, small vs large, equal vs cap weight, bonds vs stocks, gold, oil, USD) are computed from ETF prices already collected.
+- SEC submissions backfill now writes each date file once at the end (rewriting ~1,500 date files per 200-CIK batch exceeded the 4h job limit).

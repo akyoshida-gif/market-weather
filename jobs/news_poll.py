@@ -109,23 +109,38 @@ def run_sec_backfill(
     limit: int | None,
 ) -> dict[str, Any]:
     ciks = tick["cik"].to_list()[:limit] if limit else tick["cik"].to_list()
-    done, errors, buf, raws = 0, 0, [], []
+    done, errors, raws = 0, 0, []
+    frames: list[pl.DataFrame] = []
     for i, cik in enumerate(ciks):
         try:
             data = sec.get(sec_filings.SUBMISSIONS.format(cik=cik))
             raws.append(data)
-            buf.extend(sec_filings.parse_submissions(data, since))
+            rows = sec_filings.parse_submissions(data, since)
             done += 1
         except Exception:
             errors += 1
-        if len(raws) >= 200 or i == len(ciks) - 1:  # flush in batches (few R2 objects)
+            rows = []
+        if rows:
+            frames.append(pl.DataFrame(rows))
+        if len(raws) >= 500 or i == len(ciks) - 1:  # raw archive in large batches
             now = datetime.now(UTC)
             ref = _raw(storage, sec_filings.SOURCE_ID, f"submissions_{i:05d}", raws, now)
-            df = sec_filings.to_frame(buf, tick)
-            if df.height:
-                df = _stamp(df, sec_filings.SOURCE_ID, sec_filings.SOURCE_VERSION, ref, now)
-                upsert_by_date(storage, "sec_filings", "US", df, ["accession", "cik", "role"])
-            buf, raws = [], []
+            raws = []
+            if frames:
+                frames[-1] = frames[-1].with_columns(pl.lit(ref).alias("_ref"))
+    # write each date file once (rewriting ~1,500 date files per batch was the bottleneck)
+    if frames:
+        now = datetime.now(UTC)
+        allrows = pl.concat(frames, how="diagonal_relaxed")
+        df = sec_filings.to_frame(allrows.drop("_ref", strict=False).to_dicts(), tick)
+        df = _stamp(
+            df,
+            sec_filings.SOURCE_ID,
+            sec_filings.SOURCE_VERSION,
+            "raw/sec_filings (submissions batches)",
+            now,
+        )
+        upsert_by_date(storage, "sec_filings", "US", df, ["accession", "cik", "role"])
     return {"ciks": len(ciks), "ok": done, "errors": errors}
 
 
