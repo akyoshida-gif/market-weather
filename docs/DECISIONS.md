@@ -105,3 +105,12 @@ Owner direction (2026-10-26): focus on US incl. small caps / penny stocks; JP sc
 
 - Nasdaq earnings API not used (robots Disallow:/; ToS bans automated capture and ML use). Owner agreed.
 - Actual earnings release time = SEC 8-K Item 2.02 acceptance/dissemination time (to the second). Next earnings date = estimated from each company's historical cadence (~quarterly). Analyst EPS consensus / surprise not available (accepted limitation).
+
+---
+
+## ADR-0012 | 2026-10-26 | accepted | Macro data expansion; SEC backfill batching
+
+- Owner: long-only focus; test macro/cross-asset/flow information (money supply, oil, short/long rates, bonds, defensive vs risk-on sectors, options, margin balances).
+- FRED series added: DGS3MO, DGS1, DGS5, T10Y3M, SOFR, RRPONTSYD, BAA10Y, WALCL, WTREGEN, M2SL, ICSA, CPIAUCSL, UNRATE, INDPRO, UMCSENT, PCOPPUSDM, DHHNGSP. Monthly series get conservative publication lags (days after the 1st of the month: M2 55, CPI 45, UNRATE 40, INDPRO 48, UMCSENT 35, copper 45). Latest vintage only (revisions not modelled; small for these series).
+- Cross-asset regime features (defensive vs cyclical sector ratio, small vs large, equal vs cap weight, bonds vs stocks, gold, oil, USD) are computed from ETF prices already collected.
+- SEC submissions backfill now writes each date file once at the end (rewriting ~1,500 date files per 200-CIK batch exceeded the 4h job limit).

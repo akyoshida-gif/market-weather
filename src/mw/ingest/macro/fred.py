@@ -40,6 +40,26 @@ SERIES: dict[str, int] = {
     "DCOILWTICO": 9,  # weekly EIA-based updates
     "DCOILBRENTEU": 9,
     "NFCI": 6,  # week ending Friday, released following Wednesday
+    # --- rates curve / funding (ADR-0012) ---
+    "DGS3MO": 1,
+    "DGS1": 1,
+    "DGS5": 1,
+    "T10Y3M": 1,
+    "SOFR": 1,
+    "RRPONTSYD": 1,  # overnight reverse repo usage (liquidity)
+    "BAA10Y": 1,  # corporate credit spread
+    # --- liquidity / money (weekly, monthly) ---
+    "WALCL": 2,  # Fed balance sheet, Wed level released Thu
+    "WTREGEN": 2,  # Treasury General Account
+    "M2SL": 55,  # monthly; date = 1st of month, released ~4th week of the following month
+    # --- economy ---
+    "ICSA": 6,  # initial claims, week ending Sat, released Thu
+    "CPIAUCSL": 45,
+    "UNRATE": 40,
+    "INDPRO": 48,
+    "UMCSENT": 35,
+    "PCOPPUSDM": 45,  # copper price (monthly)
+    "DHHNGSP": 8,  # natural gas (weekly EIA updates)
 }
 
 
