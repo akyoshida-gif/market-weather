@@ -51,6 +51,15 @@ ignore_missing_imports = true
 module = ["mw.core.*"]
 strict = true
 
+[[tool.mypy.overrides]]
+# report/UI glue over polars results; covered by build smoke tests instead of strict typing
+module = ["mw.report.*", "jobs.build_dashboard"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+
+[tool.ruff.lint.per-file-ignores]
+"src/mw/report/*" = ["E501"]
+"jobs/build_dashboard.py" = ["E501"]
