@@ -1,0 +1,10 @@
+source_id: us_prices
+version: "0.1.0"
+verified_at: "2026-10-26"
+provider: yfinance batch download (Yahoo Finance, unofficial; owner accepted, ADR-0005)
+universe: Nasdaq Trader symbol directory (nasdaqlisted.txt, otherlisted.txt) + config/universe/us_etfs.yaml
+schedule_utc: ["30 21 * * 1-5"]
+publish_lag_rule: XNYS session close + 30 min; unclosed sessions dropped
+backfill: workflow_dispatch start=YYYY-MM-DD (planned 5 years)
+cross_check: Tiingo (planned, ~100 symbols/day; free tier 500 symbols/month)
+tos_notes: personal, non-redistributed use; data only in private R2.

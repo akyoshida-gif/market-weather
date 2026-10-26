@@ -190,7 +190,7 @@ If `published_at` is unknown, derive it conservatively via the source's document
 
 ## 7. Universe
 
-- US core: S&P 500 + Nasdaq-100 (+ Russell 1000 later if runtime allows).
+- US core: **all exchange-listed common stocks incl. small caps / penny stocks** (Nasdaq Trader symbol directory, ~5,900; ADR-0008). Model universes (e.g. S&P 500 + Nasdaq-100) are subsets selected by liquidity filters.
 - US ETFs: 11 SPDR sector ETFs (XLK XLF XLV XLY XLP XLE XLI XLB XLU XLRE XLC), industry ETFs (SMH, SOXX, IGV, XBI, KRE, KBE, ITB, XHB, XRT, XOP, OIH, GDX, TAN, URA, ITA, JETS, IYT, PAVE, GRID, etc.), factor ETFs (MTUM, QUAL, USMV, VLUE, IWM, RSP), rates/credit/commodity ETFs (TLT, IEF, HYG, LQD, GLD, USO, UUP) as cross-asset context.
 - JP core: TOPIX 500 (or Prime large/mid), Nikkei 225 constituents.
 - JP sector instruments: TOPIX-17 ETFs (1617.T–1633.T), TSE 33-industry indices (fetch if free source exists; else compute from constituents).

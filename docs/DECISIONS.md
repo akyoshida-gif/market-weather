@@ -80,3 +80,13 @@ The bucket was created as `market-weather-actions` (ADR-0001 said `market-weathe
 - Small time series (vol indices, FRED) stored as year-partitioned silver files (`silver/{table}/market=.../year=YYYY/data.parquet`), upserted by (entity_id, as_of); large cross-sections (Reg SHO, short interest, options) stored per date.
 - FRED: latest values with per-series conservative publish lag; ALFRED vintages deferred (revisions are rare for these series).
 - FRED request errors are re-raised without URL (the URL contains the API key).
+
+---
+
+## ADR-0008 | 2026-10-26 | accepted | US universe = all listed common stocks; news/catalyst and signal modules; separate UI
+
+Owner direction (2026-10-26): focus on US incl. small caps / penny stocks; JP scope unchanged; add news collection; add buy/sell point indicators; the small-cap/news screen is a separate UI from the forecasting dashboard.
+- US universe: Nasdaq Trader symbol directory (nasdaqlisted + otherlisted), common stocks only (not ETF/test issue/warrant/right/unit/preferred/notes; ADRs kept) + configured ETFs (`config/universe/us_etfs.yaml`). Daily PIT snapshot in `silver/universe_membership/market=US/date=...`. Nasdaq financial status (deficient/delinquent/bankrupt) kept as `listing_issue`.
+- JP universe: JPX data_j.xlsx, TOPIX Core30+Large70+Mid400 + ETFs (`config/universe/jp_etfs.yaml`); monthly snapshot keyed by list date.
+- Prices: yfinance batch download (chunks of 200). `close` is split-adjusted as of download, `adj_close` adds dividends; raw keeps every vintage as Parquet (never pickle). Bars of sessions not yet closed (+30 min) are dropped. Silver year-partitioned, upsert by (entity_id, as_of).
+- Planned next: news/catalyst collection (SEC EDGAR filings, press-release wires, trading halts) and rule-based buy/sell signals logged and scored like forecasts. Real-time pre-market detection deferred until an event study shows value (DESIGN §0.3 non-goal stays for now).

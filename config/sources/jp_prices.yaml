@@ -1,0 +1,8 @@
+source_id: jp_prices
+version: "0.1.0"
+verified_at: "2026-10-26"
+provider: yfinance batch download (.T symbols)
+universe: JPX data_j.xlsx (monthly) TOPIX Core30+Large70+Mid400 + config/universe/jp_etfs.yaml
+schedule_utc: ["30 7 * * 1-5"]
+publish_lag_rule: XTKS session close (15:30 JST) + 30 min; unclosed sessions dropped
+tos_notes: personal, non-redistributed use; JPX list per ADR-0005.
