@@ -4,6 +4,7 @@ import numpy as np
 import polars as pl
 
 from mw.research import build, events, external
+from mw.strategy import regime
 
 
 def _frame() -> pl.DataFrame:
@@ -117,10 +118,8 @@ def test_fred_published_after_close_is_next_day() -> None:
             ]
         }
     )
-    out = build.fred_known(df).select(
-        pl.col("published_at").dt.convert_time_zone("America/New_York").dt.date()
-    )
-    assert out["published_at"].to_list() == [date(2024, 3, 5), date(2024, 3, 6)]
+    out = df.select(regime.ny_known_date(pl.col("published_at")).alias("d"))
+    assert out["d"].to_list() == [date(2024, 3, 5), date(2024, 3, 6)]
 
 
 def test_split_factor_restores_price_of_the_day() -> None:
