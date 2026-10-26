@@ -1,0 +1,12 @@
+# Strategies run in live paper trading (forward-only demo trades; ADR-0013). Long only (owner).
+# tier: adopted = passed the 3-period backtest gate; candidate = promising, proven only by live results.
+US:
+  - {key: "squeeze_break|vr1.5|c1.0|rs0.7|R3.0", tier: candidate}
+  - {key: "squeeze_break|vr1.5|c1.0|rs0.7|R3.0|rg:hy_tightening", tier: candidate}
+  - {key: "pullback_rs|rs0.7|R2.0|rg:credit_risk_on", tier: candidate}
+  - {key: "rsi2_dip|rsi10|k3.0|rg:credit_risk_on", tier: candidate}
+JP:
+  - {key: "squeeze_break|vr2.5|c1.0|rs0.9|R3.0", tier: adopted}
+  - {key: "gap_go|g0.04|R3.0", tier: adopted}
+  - {key: "pullback_rs|rs0.7|R2.0|rg:topix_up50&us_hy_tightening", tier: candidate}
+  - {key: "momentum|p0.97", tier: candidate}

@@ -112,16 +112,16 @@ svg.chart{width:100%;height:auto;max-width:100%;display:block;touch-action:pan-y
   </div>
   <div class="tabs" role="tablist" aria-label="画面">
     <button role="tab" id="t-ov" aria-selected="true" aria-controls="p-ov">概要</button>
-    <button role="tab" id="t-sig" aria-selected="false" aria-controls="p-sig">今日のシグナル</button>
+    <button role="tab" id="t-sig" aria-selected="false" aria-controls="p-sig">今日の厳選シグナル</button>
     <button role="tab" id="t-stk" aria-selected="false" aria-controls="p-stk">銘柄分析</button>
     <button role="tab" id="t-cmp" aria-selected="false" aria-controls="p-cmp">比較</button>
-    <button role="tab" id="t-bt" aria-selected="false" aria-controls="p-bt">シグナルの成績</button>
+    <button role="tab" id="t-bt" aria-selected="false" aria-controls="p-bt">戦略の成績</button>
     <button role="tab" id="t-about" aria-selected="false" aria-controls="p-about">データについて</button>
   </div>
 </div></header>
 
 <div class="wrap">
-  <div class="banner">実データで作成しています。確率の予想は予測モデルの完成後（Phase 2）に追加します。今表示している判定は、決まったルールによる「今の状態」の判定と、過去5年の実績です。</div>
+  <div class="banner">実データで作成。シグナルは「過去5年のバックテストで、開発・選定・未使用の3期間すべてで利益が出た戦略」だけから出しています。投資助言ではありません。</div>
 
   <section role="tabpanel" id="p-ov" aria-labelledby="t-ov">
     <div class="verdict" id="ov-verdict"></div>
@@ -147,18 +147,7 @@ svg.chart{width:100%;height:auto;max-width:100%;display:block;touch-action:pan-y
 
   <section role="tabpanel" id="p-sig" aria-labelledby="t-sig" hidden>
     <div class="verdict" id="sig-verdict"></div>
-    <div class="panel">
-      <div class="panel-h"><h2 id="sig-title"></h2>
-        <div class="controls">
-          <label class="label" for="sig-type">種類</label><select id="sig-type"></select>
-          <label class="label" for="sig-bucket">株価帯</label><select id="sig-bucket"><option value="">すべて</option><option value="a">$5未満</option><option value="b">$5〜20</option><option value="c">$20以上</option></select>
-          <input type="search" id="sig-q" placeholder="銘柄で絞り込み" aria-label="銘柄で絞り込み">
-        </div>
-      </div>
-      <div class="def" id="sig-def"></div>
-      <div class="tbl-wrap tall"><table id="sig-table"></table></div>
-      <div class="note">流動性の低い銘柄は除外（米国：20日平均売買代金100万ドル未満、日本：1億円未満）。銘柄名をクリックすると銘柄分析へ（詳細データがある銘柄のみ）。</div>
-    </div>
+    <div id="pick-list" style="display:flex;flex-direction:column;gap:14px"></div>
   </section>
 
   <section role="tabpanel" id="p-stk" aria-labelledby="t-stk" hidden>
@@ -176,18 +165,18 @@ svg.chart{width:100%;height:auto;max-width:100%;display:block;touch-action:pan-y
         <label><input type="checkbox" id="tg-vwap" checked><i style="background:var(--vwap)"></i>VWAP（直近安値起点）</label>
         <label><input type="checkbox" id="tg-lv" checked><i style="background:var(--down)"></i>注目水準</label>
         <label><input type="checkbox" id="tg-zone" checked><i style="background:var(--up);height:8px"></i>押し目買いゾーン</label>
-        <label><input type="checkbox" id="tg-sig" checked><i style="background:var(--warn);height:8px"></i>シグナルの印</label>
+        <label><input type="checkbox" id="tg-sig" checked><i style="background:var(--warn);height:8px"></i>採用戦略のトレード</label>
         <label><input type="checkbox" id="tg-bench"><i style="background:var(--c5)"></i>市場（重ね表示）</label>
       </div>
       <div class="chart-box"><svg class="chart" id="s-chart" viewBox="0 0 900 470" role="img" aria-label="ローソク足チャート"></svg><div class="tip" id="s-tip" hidden></div></div>
-      <div class="legend"><span>▲緑＝押し目買い</span><span>▲青＝ブレイクアウト買い</span><span>▼橙＝利益確定</span><span>▼赤＝損切り・トレンド終了</span><span>★＝急騰（出来高急増）</span></div>
+      <div class="legend"><span>▲＝買いのIN</span><span>▼＝空売りのIN</span><span>●緑＝利益で決済</span><span>●赤＝損失で決済</span><span>点線＝今日のシグナルの損切り（赤）・利確（緑）</span></div>
     </div>
     <div class="grid g2e">
       <div class="panel"><div class="panel-h"><h2>注目水準</h2><span class="label">現在値からの距離</span></div><div class="tbl-wrap"><table id="levels"></table></div></div>
       <div class="panel"><div class="panel-h"><h2>テクニカル判定</h2></div><div class="tbl-wrap"><table id="tech"></table></div></div>
     </div>
     <div class="grid g2e">
-      <div class="panel"><div class="panel-h"><h2>この銘柄のシグナル履歴と結果</h2><span class="label">10営業日後</span></div><div class="kv" id="s-sigsum"></div><div class="tbl-wrap tall" style="max-height:340px"><table id="s-sighist"></table></div></div>
+      <div class="panel"><div class="panel-h"><h2>この銘柄での採用戦略のトレード</h2><span class="label">IN→決済</span></div><div class="kv" id="s-sigsum"></div><div class="tbl-wrap tall" style="max-height:340px"><table id="s-sighist"></table></div></div>
       <div class="panel"><div class="panel-h"><h2>需給データ</h2></div><div id="s-supply"></div></div>
     </div>
     <div class="panel" id="s-news-panel"><div class="panel-h"><h2>ニュース（SEC提出書類・売買停止）</h2><span class="label">直近120日</span></div><div id="s-news"></div></div>
@@ -206,13 +195,10 @@ svg.chart{width:100%;height:auto;max-width:100%;display:block;touch-action:pan-y
 
   <section role="tabpanel" id="p-bt" aria-labelledby="t-bt" hidden>
     <div class="verdict" id="bt-verdict"></div>
-    <div class="panel">
-      <div class="panel-h"><h2>シグナル別の成績（過去5年）</h2></div>
-      <div class="def" id="bt-def"></div>
-      <div class="tbl-wrap"><table id="bt-table"></table></div>
-      <div class="note">注意：対象は現在上場している銘柄のみで、上場廃止になった銘柄は含まれません。下落した銘柄が抜けているため、成績は実際より良く出ています（特に$5未満）。</div>
-    </div>
-    <div class="panel"><div class="panel-h"><h2>年ごとの安定性</h2><span class="label">勝率（件数）</span></div><div class="tbl-wrap"><table id="bt-year"></table></div></div>
+    <div class="panel"><div class="panel-h"><h2>戦略ごとの結果</h2><span class="label">売買コスト差し引き後</span></div>
+      <div class="def">開発＝2021年10月〜2023年、選定＝2024年（ここまででルールを決めた）、検証＝2025年〜（ルール作りに一切使っていない期間）。<b>採用</b>＝3期間すべてで利益（PF 1.05超・平均損益プラス・各30件以上）。PF＝利益の合計÷損失の合計。</div>
+      <div class="tbl-wrap"><table id="bt-table"></table></div></div>
+    <div id="bt-detail" style="display:flex;flex-direction:column;gap:18px"></div>
   </section>
 
   <section role="tabpanel" id="p-about" aria-labelledby="t-about" hidden>
@@ -294,23 +280,29 @@ function judge(s){if(!s||!s.n||s.n<30)return['n0','実績不足'];const side=SID
   return['n0','単独では効果なし']}
 function judgeHtml(s){const[c,t]=judge(s);return `<span class="call ${c}">${t}</span>`}
 
-// ---------------- 今日のシグナル ----------------
-function renderSignals(){
-  const type=$('sig-type').value,bk=$('sig-bucket').value,q=$('sig-q').value.trim().toLowerCase();
-  const rows=M.signals_today.filter(r=>(!type||r.signal===type)&&(!bk||MKT!=='US'||(bk==='a'?r.close<5:bk==='b'?r.close>=5&&r.close<20:r.close>=20))&&(!q||(r.id+' '+r.name).toLowerCase().includes(q)));
-  const cnt={};M.signals_today.forEach(r=>cnt[r.signal]=(cnt[r.signal]||0)+1);
-  const hl=Object.keys(SN).map(k=>{const s=stat(k);return `${SN[k]} ${cnt[k]||0}件`}).join('、');
-  const vs=stat('volume_spike');
-  $('sig-verdict').innerHTML=`<div class="label">${M.asof} 引け時点</div><div class="head">本日のシグナル：${esc(hl)}。</div><ul><li>過去5年の実績で効果があるのは「${esc(Object.keys(SN).filter(k=>judge(stat(k))[0]!=='n0').map(k=>SN[k]+'（'+judge(stat(k))[1]+'）').join('」「')||'なし')}」。</li>${vs&&vs.n>30&&MKT==='US'?`<li>急騰（出来高急増）は、10営業日後に下落していた割合が${pct(1-vs.win)}（中央値${sgn(vs.med*100)}%）。急騰銘柄は飛び乗らず、反落を前提に見る。</li>`:''}</ul>`;
-  $('sig-title').textContent=`今日のシグナル（${rows.length}件）`;
-  $('sig-def').innerHTML=type?`<b>${esc(SN[type])}</b>：${esc(DEFS[type])}`:'シグナルの種類を選ぶと条件を表示します。成績＝同じシグナルが過去5年に出たとき、10営業日後に予想どおりの方向に動いた割合（同じ株価帯での実績）。';
-  $('sig-table').innerHTML=`<thead><tr><th>銘柄</th><th>シグナル</th><th>過去実績の判定</th><th class="n">勝率</th><th class="n">10日後中央値</th><th class="n">終値</th><th class="n">前日比</th><th class="n">出来高（20日比）</th><th class="n">RSI</th></tr></thead><tbody>${rows.slice(0,500).map(r=>{const s=stat(r.signal,bucketOf(r.close));const has=!!M.bars[r.id];
-    return `<tr class="${has?'click':''}" ${has?`tabindex="0" data-id="${esc(r.id)}"`:''}><td><b class="mono">${esc(r.id.split(':')[1])}</b> ${esc(r.name).slice(0,28)}${has?'':' <span class="muted">(詳細なし)</span>'}</td><td>${esc(SN[r.signal])}</td><td>${judgeHtml(s)}</td><td class="n">${s?pct(s.win):'—'}</td><td class="n ${s?cls(s.med):''}">${s?sgn(s.med*100)+'%':'—'}</td><td class="n">${fp(r.close)}</td><td class="n ${cls(r.chg)}">${r.chg==null?'—':sgn(r.chg*100)+'%'}</td><td class="n">${r.vr==null?'—':r.vr.toFixed(1)+'倍'}</td><td class="n">${r.rsi==null?'—':r.rsi.toFixed(0)}</td></tr>`}).join('')||'<tr><td colspan="9" class="empty">該当なし</td></tr>'}</tbody>`}
-const DEFS={pullback_buy:'50日線が上向き・株価がその上にあり、当日の安値が20日線（±0.5%）まで下げたあと、陽線で前日より高く20日線の上で引けた。直前5日のうち3日以上は20日線の上だった。',
- breakout_buy:'終値が過去60日の高値を上抜け、出来高が20日平均の1.5倍以上、終値が当日の値幅の上位30%。',
- take_profit:'RSI（14日）が75以上、当日に60日高値を付けたが陰線（始値より安く引け）。',
- breakdown_sell:'出来高20日平均の1.3倍以上で50日線を下に割った、または過去60日の安値を終値で割った。',
- volume_spike:'出来高が20日平均の5倍以上で、終値が前日比+20%以上。'};
+// ---------------- 今日の厳選シグナル ----------------
+const FAM_DEF={
+ spike_fade:{act:'空売り',cond:r=>[['前日比',sgn(r.ret1*100)+'%','+20%以上'],['出来高',vol(r.volume)+'（20日平均 '+vol(r.vol20)+' の'+(r.vr||0).toFixed(1)+'倍）','5倍以上'],['売買代金',usd(r.dvol),'流動性の確認'],['株価',fp(r.close),'$1〜$50']]},
+ gap_go:{act:'買い',cond:r=>[['窓（寄り付きの上昇）',sgn(r.gap*100)+'%','+4%以上'],['引けの位置',pct(r.clv)+'（当日の値幅のどこで引けたか）','上位25%以内'],['出来高',vol(r.volume)+'（20日平均の'+(r.vr||0).toFixed(1)+'倍）','3倍以上'],['売買代金',usd(r.dvol),'']]},
+ squeeze_break:{act:'買い',cond:r=>[['終値と60日高値',fp(r.close)+' ＞ '+fp(r.hi60p),'上抜け'],['出来高',vol(r.volume)+'（20日平均の'+(r.vr||0).toFixed(1)+'倍）','基準以上'],['市場に対する強さ','上位'+pct(1-r.rs_pct),'上位10〜30%'],['引けの位置',pct(r.clv),'上位30%以内']]},
+ rsi2_dip:{act:'買い',cond:r=>[['2日RSI',(r.rsi2||0).toFixed(1),'5〜10未満'],['200日線との位置',sgn((r.close/r.ma200-1)*100)+'%','上']]},
+ momentum:{act:'買い',cond:r=>[]}};
+function vol(v){if(v==null)return'—';return MKT==='US'?(v>=1e6?(v/1e6).toFixed(2)+'百万株':Math.round(v).toLocaleString()+'株'):(v>=1e4?(v/1e4).toFixed(1)+'万株':Math.round(v).toLocaleString()+'株')}
+function usd(v){if(v==null)return'—';return MKT==='US'?'$'+(v>=1e9?(v/1e9).toFixed(2)+'B':v>=1e6?(v/1e6).toFixed(1)+'M':Math.round(v/1e3)+'K'):(v>=1e8?(v/1e8).toFixed(1)+'億円':Math.round(v/1e4).toLocaleString()+'万円')}
+function famStat(fam){return (M.strategies||[]).find(x=>x.family===fam)}
+function renderPicks(){const P=M.picks||[];const adopted=(M.strategies||[]).filter(f=>f.adopted);
+  $('sig-verdict').innerHTML=`<div class="label">${M.asof} 引け時点 → 次の営業日の行動</div><div class="head">${P.length?`本日の厳選シグナルは ${P.length} 件。`:'本日は該当なし。見送り。'}</div><ul><li>採用中の戦略：${adopted.length?adopted.map(f=>`${esc(f.strategy.label)}（${f.strategy.horizon}・${f.strategy.side==='short'?'空売り':'買い'}）`).join('、'):'なし'}</li><li>不採用の戦略からはシグナルを出しません（「戦略の成績」タブに理由）。</li></ul>`;
+  $('pick-list').innerHTML=P.length?P.map(r=>{const f=famStat(r.family)||{};const t=f.test||{};const def=FAM_DEF[r.family]||{act:'',cond:()=>[]};const short=r.side==='short';
+    const tp=r.target,sl=r.stop;const slp=(sl/r.close-1)*100,tpp=tp?(tp/r.close-1)*100:null;
+    return `<div class="panel" style="border-left:4px solid ${short?'var(--down)':'var(--up)'}">
+      <div class="panel-h"><div><div class="label">${esc(r.label)}・${esc(r.horizon)}（最長${r.max_hold}営業日）</div><h2>${esc(r.id.split(':')[1])} ${esc(r.name)}</h2></div><span class="call ${short?'d2':'u2'}">${def.act}</span></div>
+      <div class="kv"><div><span class="label">IN</span><span class="v">次の寄り付き</span><span class="t">基準価格 ${fp(r.close)}（本日終値）</span></div>
+        <div><span class="label">LS（損切り）</span><span class="v down">${fp(sl)}</span><span class="t">基準から ${sgn(slp)}%</span></div>
+        <div><span class="label">TP（利確）</span><span class="v up">${tp?fp(tp):'なし（ルールで決済）'}</span><span class="t">${tpp!=null?'基準から '+sgn(tpp)+'%':'—'}${r.rr?'・損益比 1:'+r.rr.toFixed(1):''}</span></div>
+        <div><span class="label">期限</span><span class="v">${r.max_hold}営業日</span><span class="t">到達しなければ期限の引けで決済</span></div></div>
+      <div class="tbl-wrap"><table><thead><tr><th>満たした条件</th><th>実際の値</th><th>基準</th></tr></thead><tbody>${def.cond(r).map(c=>`<tr><td>${esc(c[0])}</td><td class="mono">${esc(c[1])}</td><td class="muted">${esc(c[2])}</td></tr>`).join('')}</tbody></table></div>
+      <div class="note">この戦略の検証期間（2025年〜、ルール作りに使っていない期間）の成績：${t.trades||0}件、勝率 ${pct(t.win)}、1回あたり平均 ${sgn((t.avg||0)*100)}%、PF ${t.pf?t.pf.toFixed(2):'—'}、平均保有 ${t.hold?t.hold.toFixed(1):'—'}日。${short?'空売りは借りられる銘柄のみ。貸株料は成績に含めていません。':''}</div>
+      ${M.bars[r.id]?`<div><button class="seg" style="padding:4px 12px;cursor:pointer" data-goto="${esc(r.id)}">チャートを見る</button></div>`:''}</div>`}).join(''):'<div class="panel"><div class="empty">採用中の戦略の条件を満たした銘柄はありません。無理にポジションを取らない日です。</div></div>'}
 
 // ---------------- 銘柄分析 ----------------
 function analyze(bars){const C=bars.map(b=>b[4]),H=bars.map(b=>b[2]),Lw=bars.map(b=>b[3]),V=bars.map(b=>b[5]||0),N=bars.length,lastC=C[N-1];
@@ -330,19 +322,17 @@ function renderStock(){
   $('s-title').textContent=`${id.split(':')[1]} ${M.names[id]||''}`;$('s-sec').textContent=M.sectors[id]||'';
   const ma=a=>a[N-1];const trend=ma(A.ma20)>ma(A.ma50)&&ma(A.ma50)>ma(A.ma200)?['上昇トレンド','ok','20日＞50日＞200日の順']:ma(A.ma20)<ma(A.ma50)&&ma(A.ma50)<ma(A.ma200)?['下降トレンド','bad','20日＜50日＜200日の順']:['トレンドなし','warn','移動平均の並びが揃っていない'];
   const inZone=A.last<=A.zt&&A.last>=A.zb,st=A.last>=A.levels[2][1]*0.997?'ブレイク中':inZone?'押し目買いゾーン内':A.last>A.zt?'押し目待ち（ゾーンより上）':A.last<A.levels[6][1]?'サポート割れ':'ゾーンの下';
-  const marks=(M.marks[id]||[]);const lastMark=marks.length?marks[marks.length-1]:null;
-  $('s-verdict').innerHTML=`<div class="head">${esc(M.names[id]||id)}：<span class="${trend[1]==='ok'?'up':trend[1]==='bad'?'down':''}">${trend[0]}</span>、${st}。押し目買いは ${fp(A.zb)}〜${fp(A.zt)}、${fp(A.levels[2][1])} を出来高を伴って超えればブレイク、${fp(A.levels[6][1])} を割ったら中止。</div>${lastMark?`<div class="note">直近のシグナル：${lastMark[0]} ${esc(SN[lastMark[1]])}</div>`:''}`;
+  const trs=(M.trades||{})[id]||[];const pick=(M.picks||[]).find(p=>p.id===id);
+  $('s-verdict').innerHTML=`<div class="head">${esc(M.names[id]||id)}：<span class="${trend[1]==='ok'?'up':trend[1]==='bad'?'down':''}">${trend[0]}</span>、${st}。押し目買いは ${fp(A.zb)}〜${fp(A.zt)}、${fp(A.levels[2][1])} を出来高を伴って超えればブレイク、${fp(A.levels[6][1])} を割ったら中止。</div>${pick?`<div class="note"><b>本日のシグナル：${esc(pick.label)}（${pick.side==='short'?'空売り':'買い'}）</b> IN 次の寄り付き／LS ${fp(pick.stop)}／TP ${pick.target?fp(pick.target):'ルール'}</div>`:''}`;
   drawStock(id,bars,A);
   $('levels').innerHTML=`<thead><tr><th>水準</th><th class="n">価格</th><th class="n">現在値から</th><th>根拠と使い方</th></tr></thead><tbody>${A.levels.map(([n,v,w])=>{const d=(v/A.last-1)*100;return n==='現在値'?`<tr><td><b>${n}</b></td><td class="n"><b>${fp(v)}</b></td><td class="n">—</td><td></td></tr>`:`<tr><td>${n}</td><td class="n">${fp(v)}</td><td class="n ${cls(d)}">${sgn(d)}%</td><td class="muted wrap">${esc(w)}</td></tr>`}).join('')}</tbody>`;
   const dev20=(A.last/ma(A.ma20)-1)*100,devV=A.vwap[N-1]?(A.last/A.vwap[N-1]-1)*100:null;
   const rows=[['移動平均の並び',trend[0],trend[1],trend[2]],['20日線からの乖離',sgn(dev20)+'%',Math.abs(dev20)>8?'warn':'ok',Math.abs(dev20)>8?'離れすぎ。押し目を待つ':'適正範囲'],['VWAP（安値起点）からの乖離',devV==null?'—':sgn(devV)+'%',devV>0?'ok':'bad',devV>0?'安値以降の買い方の平均コストより上＝買い方優勢':'平均コストより下＝戻りで売りが出やすい'],['RSI（14日）',A.rsi.toFixed(0),A.rsi>70?'bad':A.rsi<30?'ok':'',A.rsi>70?'買われすぎ':A.rsi<30?'売られすぎ（反発しやすい）':'過熱感なし'],['ATR（14日）',fp(A.atr)+'（'+(A.atr/A.last*100).toFixed(1)+'%）','','1日の平均的な値幅'],['出来高（20日平均比）',A.volRatio.toFixed(2)+'倍',A.volRatio>1.5?'ok':'',A.volRatio>1.5?'出来高を伴っている':'通常'],['60日高値まで',sgn((A.hi60/A.last-1)*100)+'%','','']];
   const lab={ok:'買い材料',bad:'売り材料',warn:'注意'};
   $('tech').innerHTML=`<thead><tr><th>指標</th><th class="n">値</th><th>判定</th><th>意味</th></tr></thead><tbody>${rows.map(([a,b,c,d])=>`<tr><td>${a}</td><td class="n">${b}</td><td>${c?`<span class="pill ${c}">${lab[c]}</span>`:''}</td><td class="muted wrap">${esc(d)}</td></tr>`).join('')}</tbody>`;
-  // signal history with outcomes
-  const idx=Object.fromEntries(bars.map((b,i)=>[b[0],i]));const hist=marks.slice().reverse().map(([d,k])=>{const i=idx[d];const f=i!=null&&i+HZ<N?bars[i+HZ][4]/bars[i][4]-1:null;const ok=f==null?null:(SIDE[k]==='buy'?f>0:f<0);return{d,k,f,ok}});
-  const done=hist.filter(h=>h.ok!==null);const per={};done.forEach(h=>{per[h.k]=per[h.k]||[0,0];per[h.k][1]++;if(h.ok)per[h.k][0]++});
-  $('s-sigsum').innerHTML=Object.keys(per).length?Object.entries(per).map(([k,[w,n]])=>`<div><span class="label">${esc(SN[k])}</span><span class="v">${pct(w/n)}</span><span class="t">${n}回中${w}回 予想どおり</span></div>`).join(''):'<div><span class="t">直近1年のシグナルなし</span></div>';
-  $('s-sighist').innerHTML=`<thead><tr><th>日付</th><th>シグナル</th><th class="n">10日後</th><th>結果</th></tr></thead><tbody>${hist.map(h=>`<tr><td class="mono">${h.d}</td><td>${esc(SN[h.k])}</td><td class="n ${cls(h.f)}">${h.f==null?'—':sgn(h.f*100)+'%'}</td><td>${h.ok==null?'<span class="pill">結果待ち</span>':h.ok?'<span class="pill ok">予想どおり</span>':'<span class="pill bad">逆に動いた</span>'}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">シグナルなし</td></tr>'}</tbody>`;
+  const done=trs.filter(t=>t[8]!=='open');const w=done.filter(t=>t[7]>0).length;
+  $('s-sigsum').innerHTML=done.length?`<div><span class="label">トレード数</span><span class="v">${done.length}</span><span class="t">採用戦略のみ</span></div><div><span class="label">勝率</span><span class="v">${pct(w/done.length)}</span><span class="t">${w}勝${done.length-w}敗</span></div><div><span class="label">平均損益</span><span class="v ${cls(done.reduce((a,t)=>a+t[7],0))}">${sgn(done.reduce((a,t)=>a+t[7],0)/done.length*100)}%</span><span class="t">コスト差し引き後</span></div>`:'<div><span class="t">この銘柄では採用戦略のトレードはありません</span></div>';
+  $('s-sighist').innerHTML=`<thead><tr><th>IN日</th><th>戦略</th><th class="n">IN</th><th class="n">LS</th><th class="n">TP</th><th>決済日</th><th class="n">決済</th><th class="n">損益</th></tr></thead><tbody>${trs.slice().reverse().map(t=>`<tr><td class="mono">${t[0]}</td><td>${esc((M.family_labels||{})[t[2]]||t[2])}</td><td class="n">${fp(t[3])}</td><td class="n">${fp(t[5])}</td><td class="n">${t[6]?fp(t[6]):'—'}</td><td class="mono">${t[1]}</td><td class="n">${fp(t[4])}</td><td class="n ${cls(t[7])}">${sgn(t[7]*100)}%</td></tr>`).join('')||'<tr><td colspan="8" class="empty">なし</td></tr>'}</tbody>`;
   renderSupply(id);renderNews(id)}
 function drawStock(id,bars,A){
   const svg=$('s-chart'),N=bars.length,V=Math.min(RANGE,N),start=N-V,W=900,Hh=470,L=58,R=130,T0=10,pB=320,vT=338,vB=430;
@@ -355,8 +345,10 @@ function drawStock(id,bars,A){
   const ln=(arr,c,w=1.4,dash='')=>{const p=[];for(let i=start;i<N;i++)if(arr[i]!=null)p.push(sx(i)+','+sy(arr[i]));return p.length?`<polyline points="${p.join(' ')}" fill="none" stroke="${c}" stroke-width="${w}" ${dash?`stroke-dasharray="${dash}"`:''}/>`:''};
   if(TG.ma200)g+=ln(A.ma200,'var(--ma200)');if(TG.ma50)g+=ln(A.ma50,'var(--ma50)');if(TG.ma20)g+=ln(A.ma20,'var(--ma20)');if(TG.vwap)g+=ln(A.vwap,'var(--vwap)',1.6,'5 3');
   if(bb)g+=`<polyline points="${bb.map((v,k)=>v==null?null:sx(start+k)+','+sy(v)).filter(Boolean).join(' ')}" fill="none" stroke="var(--c5)" stroke-width="1.4" stroke-dasharray="2 2"/>`;
-  if(TG.sig){const idx=Object.fromEntries(bars.map((b,i)=>[b[0],i]));(M.marks[id]||[]).forEach(([d,k])=>{const i=idx[d];if(i==null||i<start)return;const buy=SIDE[k]==='buy';const col=k==='pullback_buy'?'var(--up)':k==='breakout_buy'?'var(--accent)':k==='take_profit'?'var(--warn)':k==='volume_spike'?'var(--c3)':'var(--down)';
-    if(k==='volume_spike'){g+=`<text x="${sx(i)}" y="${sy(bars[i][2])-8}" text-anchor="middle" style="fill:${col};font-size:13px">★</text>`}else if(buy){const y=sy(bars[i][3])+12;g+=`<path d="M${sx(i)} ${y-7} l5 8 h-10z" fill="${col}"/>`}else{const y=sy(bars[i][2])-12;g+=`<path d="M${sx(i)} ${y+7} l5 -8 h-10z" fill="${col}"/>`}})}
+  if(TG.sig){const idx=Object.fromEntries(bars.map((b,i)=>[b[0],i]));((M.trades||{})[id]||[]).forEach(t=>{const i=idx[t[0]],j=idx[t[1]];if(i==null||i<start)return;const short=t[2]==='spike_fade';const col=t[7]>0?'var(--up)':'var(--down)';
+    const y=short?sy(bars[i][2])-12:sy(bars[i][3])+12;g+=short?`<path d="M${sx(i)} ${y+7} l5 -8 h-10z" fill="var(--down)"/>`:`<path d="M${sx(i)} ${y-7} l5 8 h-10z" fill="var(--up)"/>`;
+    if(j!=null){g+=`<line x1="${sx(i)}" y1="${sy(t[3])}" x2="${sx(j)}" y2="${sy(t[4])}" stroke="${col}" stroke-width="1.2" stroke-dasharray="3 2"/><circle cx="${sx(j)}" cy="${sy(t[4])}" r="4" fill="${col}"/>`}});
+    const pk=(M.picks||[]).find(p=>p.id===id);if(pk){[[pk.stop,'var(--down)','LS'],[pk.target,'var(--up)','TP']].forEach(([v,c,n])=>{if(v==null||v<lo||v>hi)return;g+=`<line x1="${sx(N-1)-40}" y1="${sy(v)}" x2="${W-R}" y2="${sy(v)}" stroke="${c}" stroke-width="2" stroke-dasharray="4 3"/><text x="${sx(N-1)-44}" y="${sy(v)+3}" text-anchor="end" class="lbl" style="fill:${c}">${n} ${fp(v)}</text>`})}}
   const used=[];if(TG.lv)[[0,'var(--down)'],[1,'var(--down)'],[2,'var(--warn)'],[6,'var(--up)'],[7,'var(--up)']].forEach(([k,c])=>{const[n,v]=A.levels[k];if(v<lo||v>hi)return;let y=sy(v);g+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${c}" stroke-width="1" stroke-dasharray="6 4" opacity=".85"/>`;while(used.some(u=>Math.abs(u-y)<13))y+=13;used.push(y);g+=`<text x="${W-R+6}" y="${y+3}" class="lbl" style="fill:${c}">${n} ${fp(v)}</text>`});
   let yc=sy(A.last);while(used.some(u=>Math.abs(u-yc)<13))yc+=13;g+=`<rect x="${W-R+2}" y="${yc-8}" width="${R-6}" height="16" rx="3" fill="var(--ink)"/><text x="${W-R+6}" y="${yc+4}" style="fill:var(--surface)">現在 ${fp(A.last)}</text>`;
   const vmax=Math.max(...vis.map(x=>x[5]||0))||1,vs=v=>vB-(v/vmax)*(vB-vT);g+=`<line x1="${L}" y1="${vB}" x2="${W-R}" y2="${vB}" stroke="var(--line)"/><text x="${L-6}" y="${vT+8}" text-anchor="end">出来高</text>`;
@@ -364,9 +356,9 @@ function drawStock(id,bars,A){
   const vp=[];for(let i=start;i<N;i++)if(A.v20[i]!=null)vp.push(sx(i)+','+vs(A.v20[i]));g+=`<polyline points="${vp.join(' ')}" fill="none" stroke="var(--ink)" stroke-width="1" opacity=".6"/>`;
   for(let k=0;k<5;k++){const i=start+Math.round(k*(V-1)/4);g+=`<text x="${sx(i)}" y="${Hh-12}" text-anchor="middle">${md(bars[i][0])}</text>`}
   g+=`<line id="sc-x" x1="0" x2="0" y1="${T0}" y2="${vB}" stroke="var(--ink)" stroke-width=".8" visibility="hidden"/>`;svg.innerHTML=g;
-  const mk=Object.fromEntries((M.marks[id]||[]).map(([d,k])=>[d,k]));
+  const mk=Object.fromEntries(((M.trades||{})[id]||[]).map(t=>[t[0],(M.family_labels||{})[t[2]]||t[2]]));
   hover(svg,$('s-tip'),W,L,R,V,i=>{const x=bars[i],pc=i>0?bars[i-1][4]:x[1],ch=(x[4]/pc-1)*100;const xl=$('sc-x');xl.setAttribute('x1',sx(i));xl.setAttribute('x2',sx(i));xl.setAttribute('visibility','visible');
-    return `<b>${x[0]}</b>${mk[x[0]]?' <span style="color:var(--warn)">'+esc(SN[mk[x[0]]])+'</span>':''}<br>始 ${fp(x[1])}　高 ${fp(x[2])}<br>安 ${fp(x[3])}　終 ${fp(x[4])} <span class="${cls(ch)}">${sgn(ch,2)}%</span><br>出来高 ${A.v20[i]?(x[5]/A.v20[i]).toFixed(2)+'倍（20日平均比）':'—'}`+(A.ma20[i]?`<br>20日線 ${fp(A.ma20[i])}`:'')+(A.ma50[i]?`　50日線 ${fp(A.ma50[i])}`:'')+(A.vwap[i]?`<br>VWAP ${fp(A.vwap[i])}`:'')},()=>$('sc-x').setAttribute('visibility','hidden'),start)}
+    return `<b>${x[0]}</b>${mk[x[0]]?' <span style="color:var(--warn)">IN：'+esc(mk[x[0]])+'</span>':''}<br>始 ${fp(x[1])}　高 ${fp(x[2])}<br>安 ${fp(x[3])}　終 ${fp(x[4])} <span class="${cls(ch)}">${sgn(ch,2)}%</span><br>出来高 ${A.v20[i]?(x[5]/A.v20[i]).toFixed(2)+'倍（20日平均比）':'—'}`+(A.ma20[i]?`<br>20日線 ${fp(A.ma20[i])}`:'')+(A.ma50[i]?`　50日線 ${fp(A.ma50[i])}`:'')+(A.vwap[i]?`<br>VWAP ${fp(A.vwap[i])}`:'')},()=>$('sc-x').setAttribute('visibility','hidden'),start)}
 function renderSupply(id){let h='';
   if(MKT==='US'){const sv=(M.short_vol||{})[id];if(sv&&sv.length>5){const v=sv.map(p=>p[1]).filter(x=>x!=null);const lastv=v[v.length-1],avg=v.reduce((a,b)=>a+b,0)/v.length;const st=lastv>avg*1.15?['平常より高い','bad','新規の売りが増えている。下落圧力']:lastv<avg*.85?['平常より低い','ok','売りが減り買い戻しが優勢']:['平常並み','','影響は小さい'];
       h+=`<div class="kpi" style="cursor:default"><span class="label">空売り比率（FINRA、日次）</span><span class="v">${pct(lastv,1)}</span><span class="d muted">期間平均 ${pct(avg,1)}</span>${spark(v)}<span class="read"><b>${st[0]}</b> ${st[1]?`<span class="pill ${st[1]}">${st[1]==='ok'?'上昇要因':'下落要因'}</span>`:''}<br>${st[2]}。マーケットメーカーのヘッジ売りを含むため平常でも40〜50%。</span></div>`}
@@ -392,19 +384,24 @@ function renderCompare(){const colors=['var(--c1)','var(--c2)','var(--c3)','var(
   const series=CMP.map((id,j)=>{const m=Object.fromEntries(M.bars[id].map(b=>[b[0],b[4]]));let b0=null;return{name:id.split(':')[1],color:colors[j],dash:id===M.bench,pts:dates.map(d=>{const v=m[d];if(v==null)return[d,null];if(b0==null)b0=v;return[d,(v/b0-1)*100]})}});
   lineChart($('c-chart'),$('c-tip'),series,{fmt:v=>sgn(v)+'%',zero:true,labels:true,R:150,H:380});
   const cols=CMP.map(id=>{const A=analyze(M.bars[id]);const n=M.bars[id].length;return{id,A,n}});
-  const rows=[['現在値',c=>fp(c.A.last)],['期間騰落率',c=>{const s=series[CMP.indexOf(c.id)].pts;const v=s[s.length-1][1];return `<span class="${cls(v)}">${sgn(v)}%</span>`}],['押し目買いゾーン',c=>`${fp(c.A.zb)}〜${fp(c.A.zt)}`],['ブレイクアウト',c=>`${fp(c.A.levels[2][1])}（${sgn((c.A.levels[2][1]/c.A.last-1)*100)}%）`],['サポート1',c=>`${fp(c.A.levels[6][1])}（${sgn((c.A.levels[6][1]/c.A.last-1)*100)}%）`],['RSI（14日）',c=>c.A.rsi.toFixed(0)],['20日線からの乖離',c=>sgn((c.A.last/c.A.ma20[c.n-1]-1)*100)+'%'],['出来高（20日比）',c=>c.A.volRatio.toFixed(2)+'倍'],['直近のシグナル',c=>{const m=M.marks[c.id]||[];return m.length?`${m[m.length-1][0]} ${esc(SN[m[m.length-1][1]])}`:'—'}]];
+  const rows=[['現在値',c=>fp(c.A.last)],['期間騰落率',c=>{const s=series[CMP.indexOf(c.id)].pts;const v=s[s.length-1][1];return `<span class="${cls(v)}">${sgn(v)}%</span>`}],['押し目買いゾーン',c=>`${fp(c.A.zb)}〜${fp(c.A.zt)}`],['ブレイクアウト',c=>`${fp(c.A.levels[2][1])}（${sgn((c.A.levels[2][1]/c.A.last-1)*100)}%）`],['サポート1',c=>`${fp(c.A.levels[6][1])}（${sgn((c.A.levels[6][1]/c.A.last-1)*100)}%）`],['RSI（14日）',c=>c.A.rsi.toFixed(0)],['20日線からの乖離',c=>sgn((c.A.last/c.A.ma20[c.n-1]-1)*100)+'%'],['出来高（20日比）',c=>c.A.volRatio.toFixed(2)+'倍'],['本日のシグナル',c=>{const p=(M.picks||[]).find(x=>x.id===c.id);return p?esc(p.label):'—'}]];
   $('c-table').innerHTML=`<thead><tr><th>項目</th>${cols.map(c=>`<th>${esc(c.id.split(':')[1])} ${esc((M.names[c.id]||'').slice(0,12))}</th>`).join('')}</tr></thead><tbody>${rows.map(([n,f])=>`<tr><td>${n}</td>${cols.map(c=>`<td>${f(c)}</td>`).join('')}</tr>`).join('')}</tbody>`}
 
-// ---------------- シグナルの成績 ----------------
-function renderBT(){const buckets=MKT==='US'?['全体','$5未満','$5〜20','$20以上']:['全体'];
-  const good=Object.keys(SN).filter(k=>judge(stat(k))[0]!=='n0');
-  $('bt-verdict').innerHTML=`<div class="label">過去5年・${MKT==='US'?'米国':'日本'}</div><div class="head">${good.length?'効果があるシグナル：'+good.map(k=>SN[k]+'（'+judge(stat(k))[1]+'）').join('、'):'単独で効果があるシグナルはない'}。</div><ul>${Object.keys(SN).map(k=>{const s=stat(k);return s?`<li>${SN[k]}：${s.n.toLocaleString()}件、予想どおりに動いた割合 ${pct(s.win,1)}、10日後の中央値 ${sgn(s.med*100)}%、市場との差（中央値）${sgn((s.med_excess||0)*100)}%</li>`:''}).join('')}</ul>`;
-  $('bt-def').innerHTML=`<b>予想どおり</b>＝買いシグナルなら${HZ}営業日後の終値がシグナル日の終値より高い、売りシグナルなら低い。<b>判定</b>：56%以上＝有効、44%以下＝逆効果（反対に使える）、その間＝単独では効果なし。`;
-  $('bt-table').innerHTML=`<thead><tr><th>シグナル</th><th>株価帯</th><th>判定</th><th class="n">件数</th><th class="n">予想どおり</th><th class="n">10日後 中央値</th><th class="n">平均</th><th class="n">市場との差</th><th class="n">−10%以上下落</th><th class="n">+10%以上上昇</th></tr></thead><tbody>${Object.keys(SN).flatMap(k=>buckets.map(b=>{const s=stat(k,b);if(!s)return'';return `<tr><td>${b==='全体'?'<b>'+SN[k]+'</b>':''}</td><td>${b}</td><td>${judgeHtml(s)}</td><td class="n">${s.n.toLocaleString()}</td><td class="n">${pct(s.win,1)}</td><td class="n ${cls(s.med)}">${sgn(s.med*100)}%</td><td class="n ${cls(s.mean)}">${sgn(s.mean*100)}%</td><td class="n ${cls(s.med_excess)}">${sgn((s.med_excess||0)*100)}%</td><td class="n">${pct(s.p_dd10,1)}</td><td class="n">${pct(s.p_up10,1)}</td></tr>`})).join('')}</tbody>`;
-  const ys=[...new Set(M.signal_stats_year.map(r=>r.year))].sort();
-  $('bt-year').innerHTML=`<thead><tr><th>シグナル</th>${ys.map(y=>`<th class="n">${y}</th>`).join('')}</tr></thead><tbody>${Object.keys(SN).map(k=>`<tr><td>${SN[k]}</td>${ys.map(y=>{const r=M.signal_stats_year.find(x=>x.signal===k&&x.year===y);return r?`<td class="n ${r.win>=.56?'up':r.win<=.44?'down':''}">${pct(r.win)}<span class="muted">（${r.n}）</span></td>`:'<td class="n">—</td>'}).join('')}</tr>`).join('')}</tbody>`}
+// ---------------- 戦略の成績 ----------------
+function mcell(m){if(!m)return'<td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td>';return `<td class="n">${m.trades}</td><td class="n">${pct(m.win)}</td><td class="n ${cls(m.avg)}">${sgn(m.avg*100)}%</td><td class="n ${m.pf>1?'up':'down'}">${m.pf?m.pf.toFixed(2):'—'}</td>`}
+function renderBT(){const S=M.strategies||[];const ad=S.filter(f=>f.adopted);
+  $('bt-verdict').innerHTML=`<div class="label">${MKT==='US'?'米国':'日本'}・過去5年・売買コスト差し引き後</div><div class="head">${ad.length?'勝てている戦略：'+ad.map(f=>f.strategy.label).join('、'):'3期間すべてで勝てている戦略はない'}。${S.length-ad.length}戦略は不採用。</div><ul>${ad.map(f=>`<li>${esc(f.strategy.label)}：検証期間（2025年〜）${f.test.trades}件、勝率${pct(f.test.win)}、1回平均${sgn(f.test.avg*100)}%、PF ${f.test.pf.toFixed(2)}、平均${f.test.hold.toFixed(1)}日保有。</li>`).join('')}</ul>`;
+  $('bt-table').innerHTML=`<thead><tr><th>戦略</th><th>区分</th><th>判定</th><th class="n" colspan="4">開発（〜2023）件数・勝率・平均・PF</th><th class="n" colspan="4">選定（2024）</th><th class="n" colspan="4">検証（2025〜）</th></tr></thead><tbody>${S.map(f=>`<tr><td><b>${esc(f.strategy.label)}</b><div class="muted" style="font-size:11px">${esc(f.strategy.key)}・${f.variants_tested}通り試行</div></td><td>${esc(f.strategy.horizon)}・${f.strategy.side==='short'?'空売り':'買い'}</td><td>${f.adopted?'<span class="call u2">採用</span>':'<span class="call n0">不採用</span>'}<div class="muted" style="font-size:11px">${esc(f.reason)}</div></td>${mcell(f.train)}${mcell(f.valid)}${mcell(f.test)}</tr>`).join('')}</tbody>`;
+  $('bt-detail').innerHTML=ad.map((f,i)=>{const d=f.detail||{};return `<div class="panel"><div class="panel-h"><h2>${esc(f.strategy.label)}（${esc(f.strategy.horizon)}）</h2><span class="label">最大ドローダウン ${pct(d.max_dd,1)}（1回に資金の10%を使った場合）</span></div>
+    <div class="def">${esc(f.strategy.why)}</div>
+    <div class="chart-box"><svg class="chart" id="eq-${i}" viewBox="0 0 900 220"></svg><div class="tip" id="eqt-${i}" hidden></div></div>
+    <div class="grid g2e"><div class="tbl-wrap"><table><thead><tr><th>年</th><th class="n">件数</th><th class="n">勝率</th><th class="n">平均</th><th class="n">PF</th></tr></thead><tbody>${(d.yearly||[]).map(y=>`<tr><td>${y.y}</td><td class="n">${y.n}</td><td class="n">${pct(y.win)}</td><td class="n ${cls(y.avg)}">${sgn(y.avg*100)}%</td><td class="n">${y.pf?y.pf.toFixed(2):'—'}</td></tr>`).join('')}</tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>決済の理由</th><th class="n">件数</th><th class="n">平均損益</th></tr></thead><tbody>${(d.reasons||[]).map(r=>`<tr><td>${{target:'利確（TP到達）',stop:'損切り（LS到達）',time:'期限で決済',rule:'ルールで決済'}[r.reason]||r.reason}</td><td class="n">${r.n}</td><td class="n ${cls(r.avg)}">${sgn(r.avg*100)}%</td></tr>`).join('')}<tr><td>保有日数（中央値・90%点）</td><td class="n" colspan="2">${d.hold_pct?d.hold_pct['50']+'日・'+d.hold_pct['90']+'日':'—'}</td></tr></tbody></table></div></div>
+    <h3>直近のトレード</h3><div class="tbl-wrap tall" style="max-height:320px"><table><thead><tr><th>銘柄</th><th>シグナル日</th><th>決済日</th><th class="n">IN</th><th class="n">LS</th><th class="n">TP</th><th class="n">決済</th><th>理由</th><th class="n">損益</th></tr></thead><tbody>${(d.recent||[]).map(t=>`<tr class="${M.bars[t.entity_id]?'click':''}" data-id="${esc(t.entity_id)}"><td class="mono">${esc(t.entity_id.split(':')[1])}</td><td class="mono">${t.signal_date}</td><td class="mono">${t.exit_date}</td><td class="n">${fp(t.entry)}</td><td class="n">${fp(t.stop)}</td><td class="n">${t.target?fp(t.target):'—'}</td><td class="n">${fp(t.exit)}</td><td>${{target:'利確',stop:'損切り',time:'期限',rule:'ルール'}[t.reason]||t.reason}</td><td class="n ${cls(t.ret)}">${sgn(t.ret*100)}%</td></tr>`).join('')}</tbody></table></div></div>`}).join('');
+  ad.forEach((f,i)=>{const c=(f.detail||{}).curve||[];if(c.length>1)lineChart($('eq-'+i),$('eqt-'+i),[{name:'資金（1.0=開始）',color:'var(--accent)',pts:c}],{fmt:v=>v.toFixed(2),H:220})});
+  document.querySelectorAll('#bt-detail tr[data-id]').forEach(tr=>tr.addEventListener('click',()=>goStock(tr.dataset.id)))}
 
-function renderAbout(){const rows=[['作成日時',DATA.generated_at.slice(0,16).replace('T',' ')+' UTC'],['株価の最終日',M.asof],['対象銘柄数',(M.universe_size||0).toLocaleString()+'銘柄（'+(MKT==='US'?'米国の上場普通株すべて':'TOPIX500')+'）'],['詳細表示できる銘柄',Object.keys(M.bars).length+'銘柄'+(MKT==='US'?'（オプション監視銘柄・セクターETF・今日のシグナル上位）':'（Core30・Large70・業種別ETF）')],['シグナルの検証期間','2021年10月〜（'+HZ+'営業日後で採点）'],['予測モデル','未稼働（Phase 2で追加）']];
+function renderAbout(){const rows=[['作成日時',DATA.generated_at.slice(0,16).replace('T',' ')+' UTC'],['株価の最終日',M.asof],['対象銘柄数',(M.universe_size||0).toLocaleString()+'銘柄（'+(MKT==='US'?'米国の上場普通株すべて':'TOPIX500')+'）'],['詳細表示できる銘柄',Object.keys(M.bars).length+'銘柄'+(MKT==='US'?'（オプション監視銘柄・セクターETF・今日のシグナル上位）':'（Core30・Large70・業種別ETF）')],['戦略の検証','開発 2021/10〜2023、選定 2024、検証 2025〜（未使用期間）。売買コスト差し引き後。分割・異常値を含むトレードは除外'],['予測モデル','未稼働（Phase 2で追加）']];
   if(MKT==='US')rows.push(['需給データ','FINRA空売り比率（日次）、FINRA空売り残高（月2回）、オプション（毎日2回）'],['ニュース','SEC提出書類（15分ごと）、売買停止（Nasdaq・NYSE）']);else rows.push(['需給データ','JPX空売り残高報告（日次）、日証金 貸借残・逆日歩（日次）']);
   $('about').innerHTML=`<tbody>${rows.map(([a,b])=>`<tr><td>${a}</td><td class="wrap">${esc(b)}</td></tr>`).join('')}</tbody>`}
 
@@ -414,22 +411,19 @@ function showTab(k){TABS.forEach(t=>{$('t-'+t).setAttribute('aria-selected',t===
 TABS.forEach(t=>$('t-'+t).addEventListener('click',()=>showTab(t)));
 function goStock(id){if(!M.bars[id])return;CUR=id;renderStock();showTab('stk')}
 const rowNav=(el,fn)=>{el.addEventListener('click',e=>{const tr=e.target.closest('tr[data-id]');if(tr)fn(tr.dataset.id)});el.addEventListener('keydown',e=>{const tr=e.target.closest('tr[data-id]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();fn(tr.dataset.id)}})};
-rowNav($('sig-table'),goStock);rowNav($('sector-table'),goStock);
+rowNav($('sector-table'),goStock);$('pick-list').addEventListener('click',e=>{const b=e.target.closest('[data-goto]');if(b)goStock(b.dataset.goto)});
 const segWire=(id,fn)=>$(id).addEventListener('click',e=>{const b=e.target.closest('button[data-r]');if(!b)return;[...$(id).children].forEach(x=>x.setAttribute('aria-pressed',x===b));fn(+b.dataset.r)});
 segWire('s-range',v=>{RANGE=v;renderStock()});segWire('c-range',v=>{CRANGE=v;renderCompare()});segWire('kpi-range',v=>{KRANGE=v;renderKpiChart()});
 $('kpis').addEventListener('click',e=>{const b=e.target.closest('.kpi');if(!b)return;KPI=+b.dataset.i;[...$('kpis').children].forEach(x=>x.setAttribute('aria-pressed',x===b));renderKpiChart()});
 ['ma20','ma50','ma200','vwap','lv','zone','sig','bench'].forEach(k=>{const el=$('tg-'+k);TG[k]=el.checked;el.onchange=()=>{TG[k]=el.checked;renderStock()}});
 $('s-pick').onchange=e=>{CUR=e.target.value;renderStock()};
-['sig-type','sig-bucket'].forEach(i=>$(i).onchange=renderSignals);$('sig-q').oninput=renderSignals;
 $('c-pick').addEventListener('change',e=>{const id=e.target.dataset.id;if(!id)return;if(e.target.checked){if(CMP.length<5)CMP.push(id)}else CMP=CMP.filter(x=>x!==id);renderCompare()});$('c-q').oninput=renderCompare;
-$('sig-type').innerHTML='<option value="">すべて</option>'+Object.entries(SN).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
 function setMarket(k){MKT=k;M=DATA.markets[k];try{localStorage.setItem('mw2-mkt',k)}catch(e){}
   $('mkt-US').setAttribute('aria-pressed',k==='US');$('mkt-JP').setAttribute('aria-pressed',k==='JP');
-  $('sig-bucket').disabled=k!=='US';
   const ids=Object.keys(M.bars).sort((a,b)=>(a===M.bench?-1:b===M.bench?1:a.localeCompare(b)));
   $('s-pick').innerHTML=ids.map(i=>`<option value="${esc(i)}">${esc(i.split(':')[1])} ${esc((M.names[i]||'').slice(0,24))}</option>`).join('');
   CUR=ids.find(i=>i!==M.bench)||ids[0];CMP=[];KPI=0;
-  renderOverview();renderSignals();renderStock();renderCompare();renderBT();renderAbout()}
+  renderOverview();renderPicks();renderStock();renderCompare();renderBT();renderAbout()}
 $('mkt-US').onclick=()=>setMarket('US');$('mkt-JP').onclick=()=>setMarket('JP');
 let im='US',it='ov';try{im=localStorage.getItem('mw2-mkt')||'US';it=localStorage.getItem('mw2-tab')||'ov'}catch(e){}
 setMarket(im==='JP'?'JP':'US');showTab(TABS.includes(it)?it:'ov');
