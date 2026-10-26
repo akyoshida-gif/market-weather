@@ -1,0 +1,33 @@
+# Method A (event study, VALIDATION_PLAN §3). Manual only. Results go to R2; the log shows progress only.
+name: event_study
+on:
+  workflow_dispatch:
+    inputs:
+      dev_end:
+        description: "last day of the development period"
+        required: false
+        default: "2021-12-31"
+permissions:
+  contents: read
+concurrency:
+  group: event_study
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Run
+        env:
+          # storage keys only for this step (not for checkout / setup actions)
+          MW_STORAGE_BACKEND: r2
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          IN_DEV_END: ${{ inputs.dev_end }}
+        run: uv run python -m jobs.event_study --dev-end "${IN_DEV_END:-2021-12-31}"

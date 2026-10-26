@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -208,8 +209,10 @@ class GuardedStorage:
         df.write_parquet(buf, compression="zstd")
         self.put_bytes(key, buf.getvalue(), overwrite=overwrite)
 
-    def read_parquet(self, key: str) -> pl.DataFrame:
-        return pl.read_parquet(io.BytesIO(self.get_bytes(key)))
+    def read_parquet(self, key: str, columns: Sequence[str] | None = None) -> pl.DataFrame:
+        return pl.read_parquet(
+            io.BytesIO(self.get_bytes(key)), columns=None if columns is None else [*columns]
+        )
 
 
 def open_storage(settings: StorageSettings) -> GuardedStorage:
