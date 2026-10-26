@@ -100,9 +100,28 @@ def parse_atom(data: bytes) -> list[dict[str, Any]]:
     return out
 
 
+OLDER = "https://data.sec.gov/submissions/{name}"
+
+
+def older_files(data: bytes, since: date) -> list[str]:
+    """Names of the extra submissions files (filings older than the ~1,000 most recent) that
+    overlap [since, today]."""
+    d = json.loads(data)
+    files = d.get("filings", {}).get("files", []) or []
+    return [f["name"] for f in files if str(f.get("filingTo", "9999")) >= since.isoformat()]
+
+
+def parse_older(data: bytes, cik: int, company: str, since: date) -> list[dict[str, Any]]:
+    """Extra submissions file: same column arrays as filings.recent, at the top level."""
+    return _rows(json.loads(data), cik, company, since)
+
+
 def parse_submissions(data: bytes, since: date) -> list[dict[str, Any]]:
     d = json.loads(data)
-    r = d["filings"]["recent"]
+    return _rows(d["filings"]["recent"], int(d["cik"]), d.get("name", ""), since)
+
+
+def _rows(r: dict[str, Any], cik: int, company: str, since: date) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for i, acc in enumerate(r["accessionNumber"]):
         if r["filingDate"][i] < since.isoformat():
@@ -110,8 +129,8 @@ def parse_submissions(data: bytes, since: date) -> list[dict[str, Any]]:
         out.append({
             "accession": acc,
             "form": r["form"][i],
-            "cik": int(d["cik"]),
-            "company": d.get("name", ""),
+            "cik": cik,
+            "company": company,
             "role": "Filer",
             "accepted_at": datetime.fromisoformat(
                 r["acceptanceDateTime"][i].replace("Z", "+00:00")

@@ -108,3 +108,15 @@ def test_halts_parsers(tmp_path):
     out = s.read_parquet(date_key("trading_halts", "US", date(2026, 10, 23)))
     assert out.height == 2 and set(out["entity_id"]) == {"US:TINY", "US:IPW"}
     assert out.schema["published_at"] == pl.Datetime("us", "UTC")
+
+
+def test_older_submission_files():
+    main = json.dumps({"cik": "1234567", "name": "Tiny", "filings": {
+        "recent": {"accessionNumber": [], "filingDate": [], "acceptanceDateTime": [], "form": [], "items": []},
+        "files": [{"name": "CIK0001234567-submissions-001.json", "filingFrom": "2012-01-01", "filingTo": "2019-12-31"},
+                  {"name": "CIK0001234567-submissions-002.json", "filingFrom": "2001-01-01", "filingTo": "2009-12-31"}]}}).encode()  # fmt: skip
+    assert sec_filings.older_files(main, date(2010, 1, 1)) == ["CIK0001234567-submissions-001.json"]
+    extra = json.dumps({"accessionNumber": ["a9"], "filingDate": ["2015-04-30"],
+                        "acceptanceDateTime": ["2015-04-30T20:05:00.000Z"], "form": ["8-K"], "items": ["2.02,9.01"]}).encode()  # fmt: skip
+    rows = sec_filings.parse_older(extra, 1234567, "Tiny", date(2010, 1, 1))
+    assert rows[0]["items"] == "2.02,9.01" and rows[0]["cik"] == 1234567
