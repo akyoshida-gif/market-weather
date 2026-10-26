@@ -97,6 +97,19 @@ def gap_go(market: str, gap: float, rr: float) -> Strategy:
     )  # fmt: skip
 
 
+def pullback_rs(market: str, rs: float, rr: float) -> Strategy:
+    stop = lambda: pl.min_horizontal(C("lo10"), C("ma50")) - 0.2 * C("atr")  # noqa: E731
+    return Strategy(
+        key=f"pullback_rs|rs{rs}|R{rr}", label="強い銘柄の押し目", horizon="中期", side="long",
+        entry=lambda: (C("rs_pct") >= rs) & (C("close") > C("ma50")) & (C("ma50") > C("ma200")) & (C("ma50") > C("ma50_10"))
+        & (C("low") <= C("ma20") * 1.01) & (C("close") > C("ma20")) & (C("close") > C("open")) & (C("vr") < 1.2)
+        & liq(market, 5e6) & (C("close") >= (5 if market == "US" else 300)),
+        stop=stop, target=lambda: C("close") + rr * (C("close") - stop()),
+        exit_rule=lambda: C("close") < C("ma50"), max_hold=30, rank=lambda: C("rs_pct"), params={"rs": rs, "R": rr},
+        why="市場より強い上昇トレンドの銘柄が、出来高を減らしながら20日線まで押して陽線で反発。売りが細っている押し目を拾う。",
+    )  # fmt: skip
+
+
 def index_trend(market: str, bench: str) -> Strategy:
     return Strategy(
         key="index_trend", label="指数の長期トレンド", horizon="長期", side="long",
@@ -121,6 +134,7 @@ def grid(market: str, bench: str) -> list[Strategy]:
     ]
     out += [momentum(market, p) for p in [0.9, 0.97]]
     out += [gap_go(market, g, rr) for g, rr in itertools.product([0.04, 0.08], [2.0, 3.0])]
+    out += [pullback_rs(market, r, rr) for r, rr in itertools.product([0.7, 0.85], [2.0, 3.0])]
     out += [index_trend(market, bench)]
     return out
 
@@ -139,3 +153,39 @@ def describe(s: Strategy) -> dict[str, Any]:
         "params": s.params,
         "why": s.why,
     }
+
+
+def with_regime(s: Strategy, name: str, cond: Any, desc: str) -> Strategy:
+    """Gate a strategy's entries by a market-regime condition (columns joined from mw.strategy.regime)."""
+    base = s.entry
+    return Strategy(
+        key=f"{s.key}|rg:{name}", label=s.label, horizon=s.horizon, side=s.side,
+        entry=lambda: base() & cond(), stop=s.stop, target=s.target, max_hold=s.max_hold,
+        limit=s.limit, exit_rule=s.exit_rule, rank=s.rank, params={**s.params, "regime": name},
+        why=s.why + f"（市場環境の条件：{desc}）",
+    )  # fmt: skip
+
+
+def by_key(market: str, bench: str, key: str) -> Strategy:
+    """Rebuild a strategy from its key, e.g. 'pullback_rs|rs0.7|R2.0|rg:topix_up50&us_hy_tightening'."""
+    from mw.strategy import regime
+
+    base_key, _, rg = key.partition("|rg:")
+    found = {s.key: s for s in grid(market, bench)}
+    if base_key not in found:
+        raise KeyError(f"unknown strategy {base_key}")
+    s = found[base_key]
+    if not rg:
+        return s
+    filters = regime.FILTERS_US if market == "US" else regime.FILTERS_JP
+    parts = rg.split("&")
+    conds = [filters[p][0] for p in parts]
+    desc = "、".join(filters[p][1] for p in parts)
+
+    def cond() -> pl.Expr:
+        e = conds[0]()
+        for c in conds[1:]:
+            e = e & c()
+        return e.fill_null(False)
+
+    return with_regime(s, rg, cond, desc)

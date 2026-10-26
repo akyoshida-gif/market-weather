@@ -117,3 +117,12 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 - Results (2026-10-26): US adopted = spike fade (short); JP adopted = squeeze breakout, news gap continuation. Rejected: RSI2 pullback, momentum, squeeze breakout (US), gap continuation (US), index trend.
 - Meta-labelling (LightGBM over long candidates) was not stable across valid/test (dominated by market-level features) → not adopted yet.
 - Known gaps: short borrow availability/fees not modelled; portfolio-level capital constraints not modelled; survivorship bias (current listings only).
+
+---
+
+## ADR-0013 | 2026-10-26 | accepted | Long-only focus, regime filters, live paper trading as the arbiter
+
+- Owner: avoid short selling; longs are the focus. Spike fade stays only as an "avoid chasing" warning, not a trade.
+- Regime research (20 US / 12 JP filters, singles and pairs, ~1,700 combinations): most filters that improved train+valid failed on test (overfitting). Credit-easing regimes (US HY spread tightening) helped longs in both markets, but ICE HY data on FRED covers only 3 years -> evidence thin; BAA10Y (full history) added for re-validation.
+- Because backtests cannot settle it, adopted strategies and promising candidates run in **forward-only paper trading** (one virtual book per strategy; USD 100k / JPY 10M; 1% risk per trade, max 10% per position, max 10 positions; same fills/costs as the backtest). Config: `config/strategies/paper.yaml`. State: `paper/{market}/state.json`, events `paper/{market}/events/`.
+- Promotion/demotion will be decided by live results (weekly review job, next).
