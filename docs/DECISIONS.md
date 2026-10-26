@@ -80,3 +80,14 @@ The bucket was created as `market-weather-actions` (ADR-0001 said `market-weathe
 - Small time series (vol indices, FRED) stored as year-partitioned silver files (`silver/{table}/market=.../year=YYYY/data.parquet`), upserted by (entity_id, as_of); large cross-sections (Reg SHO, short interest, options) stored per date.
 - FRED: latest values with per-series conservative publish lag; ALFRED vintages deferred (revisions are rare for these series).
 - FRED request errors are re-raised without URL (the URL contains the API key).
+
+---
+
+## ADR-0009 | 2026-10-26 | accepted | News sources and scope (owner decisions)
+
+- Press-release wires (PR Newswire, Business Wire, GlobeNewswire, ACCESS/Newsfile/EIN): **not used for now** (ToS restricts automated access/aggregation). Press releases are captured via SEC 8-K/6-K (EX-99.1); coverage gap to be measured later.
+- OTC stocks: **out of scope** (owner: only exchange-listed stocks retail investors can trade).
+- Reddit / StockTwits: **out of scope for now** (API approval required / blocked); revisit later.
+- Used: SEC EDGAR (Atom getcurrent live every 15 min; submissions JSON backfill; ticker map snapshot daily), Nasdaq halts RSS (live), NYSE halts history CSV (undocumented endpoint; may change).
+- SEC requires a User-Agent with contact info → GitHub secret `SEC_USER_AGENT` (value chosen by owner; never committed).
+- PIT: SEC published_at = EDGAR dissemination time (accepted after 17:30 ET, or 22:00 for Forms 3/4/5 → next business day 06:00 ET). Event rows: first-seen wins on re-polls.

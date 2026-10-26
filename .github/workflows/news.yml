@@ -1,0 +1,53 @@
+# US catalyst events: SEC filings (Atom) + trading halts, every 15 min on weekdays.
+name: news
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * 1-5"
+    - cron: "15 */3 * * 0,6"
+    - cron: "45 23 * * 1-5"   # daily extras: ticker map + NYSE halts history (last 3 days)
+  workflow_dispatch:
+    inputs:
+      backfill_sec:
+        description: "SEC submissions backfill since YYYY-MM-DD"
+        required: false
+      backfill_halts:
+        description: "NYSE halts history since YYYY-MM-DD"
+        required: false
+      cik_limit:
+        description: "only first N CIKs (testing)"
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: news-${{ github.event_name }}
+  cancel-in-progress: false
+jobs:
+  poll:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      MW_STORAGE_BACKEND: r2
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Run
+        env:
+          SCHED: ${{ github.event.schedule }}
+          IN_SEC: ${{ inputs.backfill_sec }}
+          IN_HALTS: ${{ inputs.backfill_halts }}
+          IN_LIMIT: ${{ inputs.cik_limit }}
+        run: |
+          ARGS=""
+          [ "$SCHED" = "45 23 * * 1-5" ] && ARGS="--daily"
+          [ -n "$IN_SEC" ] && ARGS="--backfill-sec $IN_SEC"
+          [ -n "$IN_HALTS" ] && ARGS="--backfill-halts $IN_HALTS"
+          [ -n "$IN_LIMIT" ] && ARGS="$ARGS --cik-limit $IN_LIMIT"
+          echo "args: $ARGS"
+          uv run python -m jobs.news_poll $ARGS

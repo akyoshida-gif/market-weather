@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date, datetime
+from typing import Any
 
 import polars as pl
 
@@ -81,4 +82,26 @@ def upsert_timeseries(
         )
         storage.write_parquet(key, merged)
         out[y] = merged.height
+    return out
+
+
+def date_key(table: str, market: str, d: Any) -> str:
+    return f"silver/{table}/market={market}/date={d.isoformat()}.parquet"
+
+
+def upsert_by_date(
+    storage: GuardedStorage, table: str, market: str, df: pl.DataFrame, key_cols: list[str]
+) -> dict[str, int]:
+    """Merge event rows into per-date silver files (date = column `as_of`). First seen wins:
+    an event's published_at/ingested_at must not move later on re-polls."""
+    out: dict[str, int] = {}
+    if df.height == 0:
+        return out
+    for (d,), part in df.group_by("as_of"):
+        key = date_key(table, market, d)
+        if storage.exists(key):
+            part = pl.concat([storage.read_parquet(key), part], how="diagonal_relaxed")
+        merged = part.unique(subset=key_cols, keep="first", maintain_order=True)
+        storage.write_parquet(key, merged)
+        out[str(d)] = merged.height
     return out
