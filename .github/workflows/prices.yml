@@ -1,0 +1,52 @@
+# Universe snapshot + daily OHLCV (US: all listed common stocks + ETFs; JP: TOPIX500 + ETFs).
+name: prices
+on:
+  schedule:
+    - cron: "30 21 * * 1-5"  # US: after 16:00 ET close (EDT 20:00 / EST 21:00 UTC) + lag
+    - cron: "30 7 * * 1-5"   # JP: after 15:30 JST close (06:30 UTC) + lag
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "US | JP"
+        required: true
+        default: US
+      start:
+        description: "backfill start date YYYY-MM-DD (empty = last 7 days)"
+        required: false
+      limit:
+        description: "only first N symbols (testing)"
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: prices-${{ inputs.market || github.event.schedule }}
+  cancel-in-progress: false
+jobs:
+  prices:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      MW_STORAGE_BACKEND: r2
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Run
+        env:
+          SCHED: ${{ github.event.schedule }}
+          EVENT: ${{ github.event_name }}
+          IN_MARKET: ${{ inputs.market }}
+          IN_START: ${{ inputs.start }}
+          IN_LIMIT: ${{ inputs.limit }}
+        run: |
+          if [ "$SCHED" = "30 7 * * 1-5" ]; then MARKET=JP; else MARKET="${IN_MARKET:-US}"; fi
+          ARGS="--market $MARKET"
+          [ -n "$IN_START" ] && ARGS="$ARGS --start $IN_START"
+          [ -n "$IN_LIMIT" ] && ARGS="$ARGS --limit $IN_LIMIT"
+          echo "args: $ARGS"
+          uv run python -m jobs.prices_daily $ARGS
