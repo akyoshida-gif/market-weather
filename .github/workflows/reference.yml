@@ -3,8 +3,6 @@ name: reference
 on:
   schedule:
     - cron: "20 5 * * 6"   # weekly (Saturday)
-  push:
-    branches: [data/sp500-history]  # TEMP: test before merge
   workflow_dispatch:
     inputs:
       sources:
