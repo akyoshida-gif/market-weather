@@ -262,7 +262,10 @@ def leading(day: pl.DataFrame, etf: pl.DataFrame, dev_end: Any, targets: list[st
     period (to dev_end) and in the later period, plus mean returns by feature quintile.
     """
     t = day.join(
-        etf.select("as_of", *[f"px_{s}" for s in targets + ["SPY"] if f"px_{s}" in etf.columns]),
+        etf.select(
+            "as_of",
+            *[f"px_{s}" for s in dict.fromkeys(targets + ["SPY"]) if f"px_{s}" in etf.columns],
+        ),
         on="as_of",
         how="left",
     ).sort("as_of")
@@ -271,7 +274,7 @@ def leading(day: pl.DataFrame, etf: pl.DataFrame, dev_end: Any, targets: list[st
     feats = [c for c in t.columns if c.startswith("m_")]
     px = {
         s: t[f"px_{s}"].to_numpy().astype(np.float64)
-        for s in targets + ["SPY"]
+        for s in dict.fromkeys(targets + ["SPY"])
         if f"px_{s}" in t.columns
     }
     out = []
@@ -311,7 +314,9 @@ def quintiles(
     """Mean forward return of the target by quintile of the feature (cut points from the development period)."""
     t = (
         day.select("as_of", feature)
-        .join(etf.select("as_of", f"px_{target}", "px_SPY"), on="as_of", how="left")
+        .join(
+            etf.select("as_of", *dict.fromkeys([f"px_{target}", "px_SPY"])), on="as_of", how="left"
+        )
         .sort("as_of")
     )
     x = t[feature].to_numpy().astype(np.float64)

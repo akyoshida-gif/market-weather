@@ -34,7 +34,11 @@ FEATURES = {"f_atr_pct": "値動きの大きさ（ATR÷株価）", "f_dvol20": "
             "f_ret63": "直前3か月の騰落率", "f_dist_hi": "52週高値からの距離"}  # fmt: skip
 MIN_DEV = 30  # minimum events in the search window (VALIDATION_PLAN §4); fewer -> "参考"
 MIN_SLICE = 10  # a period counts in the grade only with this many events
-CUT_END = date(2024, 12, 31)  # cut points of numeric conditions come from 2010..this date
+CUT_END = date(2024, 12, 31)
+MIN_CUT_ROWS = (
+    1000  # a numeric stock feature needs this many rows up to CUT_END to define its cut points
+)
+MIN_CUT_DAYS = 250  # same for a market-wide feature (sessions)  # cut points of numeric conditions come from 2010..this date
 F_BINS = {"lo10": 0.10, "lo20": 0.20, "hi20": 0.80, "hi10": 0.90}
 M_BINS = {"lo20": 0.20, "hi20": 0.80}
 BIN_LABELS = {
@@ -150,7 +154,7 @@ class Study:
             v = scan.select(c).collect()[c].to_numpy().astype(np.float32)
             ok = np.isfinite(v)
             ref = v[ok & (self.date_rank <= cut_rank)]
-            if len(ref) < 1000:
+            if len(ref) < MIN_CUT_ROWS:
                 continue
             qs = {k: float(np.quantile(ref, q)) for k, q in F_BINS.items()}
             self.cuts[c] = qs
@@ -174,7 +178,7 @@ class Study:
         for c in [x for x in day.columns if x.startswith("m_")]:
             v = day[c].to_numpy().astype(np.float64)
             ok = np.isfinite(v)
-            if (ok & dref).sum() < 250:
+            if (ok & dref).sum() < MIN_CUT_DAYS:
                 continue
             first = int(drank[ok].min())
             bins = {
@@ -404,37 +408,86 @@ def grade(s: dict[str, Any], has_test: bool = True) -> str:
     )
 
 
+class SearchView:
+    """The search window only (rows whose h-session outcome ends inside it), for fast repeated evaluation.
+
+    Each condition's (today, previous session) state is sliced once and kept bit-packed; rows before a
+    condition's data starts are set to 'false' so they can never start an event.
+    """
+
+    def __init__(self, study: Study, h: int) -> None:
+        lo, hi = study.search_mask_h(h)
+        self.st = study
+        self.idx = np.flatnonzero((study.date_rank >= lo) & (study.date_rank <= hi))
+        self.n = len(self.idx)
+        self.x = study.m[f"xret_{h}"][self.idx].astype(np.float64)
+        self.ok = np.isfinite(self.x)
+        self.rk = study.date_rank[self.idx]
+        self._cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+
+    def pair(self, c: str) -> tuple[np.ndarray, np.ndarray]:
+        if c not in self._cache:
+            cur = self.st._cond(c)[self.idx]
+            prv = (
+                self.st._prev(c.lstrip("!"))[self.idx]
+                if not c.startswith("!")
+                else np.zeros(self.n, bool)
+            )
+            start = self.st.start_rank.get(c.lstrip("!"), 0)
+            if start:
+                cur = cur & (self.rk >= start)
+            self._cache[c] = (np.packbits(cur), np.packbits(prv))
+        a, b = self._cache[c]
+        return np.unpackbits(a, count=self.n).view(bool), np.unpackbits(b, count=self.n).view(bool)
+
+    def quick(self, cur: np.ndarray, prv: np.ndarray) -> tuple[int, float, float]:
+        sel = np.flatnonzero(cur & ~prv & self.ok)
+        n = len(sel)
+        if n < 2:
+            return n, 0.0, 0.0
+        x = self.x[sel]
+        return n, float(x.mean()), _clustered_t(x, self.rk[sel])
+
+
 def stepwise(study: Study, seeds: list[str], extras: list[str], h: int, beam: int = 25, max_depth: int = 6,
              min_gain: float = 0.002, min_t: float = 2.0, log: Any = None) -> tuple[list[dict[str, Any]], int]:  # fmt: skip
-    """Beam search: add one condition at a time, keep the best by mean excess return in the search window."""
+    """Beam search: add one condition at a time, keep the best by mean excess return in the search window.
+
+    A child is kept only if it beats its parent by `min_gain` and keeps MIN_DEV+ events; one bin per feature.
+    """
+    view = SearchView(study, h)
     pool = seeds + extras
     found: dict[tuple[str, ...], dict[str, Any]] = {}
     level: list[tuple[tuple[str, ...], float]] = []
     for c in seeds:
-        n, mu, t = study.quick(study.events((c,)), h)
+        cur, prv = view.pair(c)
+        n, mu, t = view.quick(cur, prv)
         if n >= MIN_DEV:
             if t >= min_t:
                 found[(c,)] = {"conds": (c,), "n": n, "x": mu, "t": t}
             level.append(((c,), mu))
     tried = len(seeds)
     level = sorted(level, key=lambda z: -z[1])[:beam]
+    if log:
+        log(f"      段階1：候補 {len(level)}・試した数 {tried:,}")
     for depth in range(max_depth - 1):
         nxt: dict[tuple[str, ...], float] = {}
         for conds, parent_mu in level:
-            cur_p, prv_p, st_p = study.state(conds), study.prev_state(conds), study.start_of(conds)
+            cur_p, prv_p = view.pair(conds[0])
+            cur_p, prv_p = cur_p.copy(), prv_p.copy()
+            for c in conds[1:]:
+                a, b = view.pair(c)
+                cur_p &= a
+                prv_p &= b
             used = {c.split("__")[0] for c in conds}
             for c in pool:
-                if c in conds or c.split("__")[0] in used:  # one bin per feature
+                if c in conds or c.split("__")[0] in used:
                     continue
                 key = tuple(sorted(conds + (c,)))
                 if key in nxt or key in found:
                     continue
-                ev = study.onset(
-                    cur_p & study._cond(c),
-                    prv_p & study._prev(c),
-                    max(st_p, study.start_rank.get(c, 0)),
-                )
-                n, mu, t = study.quick(ev, h)
+                a, b = view.pair(c)
+                n, mu, t = view.quick(cur_p & a, prv_p & b)
                 tried += 1
                 if n < MIN_DEV or mu < parent_mu + min_gain:
                     continue
