@@ -55,7 +55,7 @@ jobs:
       matrix:
         universe: [sp500, all]
         window: [main, recent]
-        task: [singles, s5, s20, s60, tree, ml]
+        task: [singles_stock, singles_mkt, s5, s20, s60, tree, ml]
         exclude:
           - window: recent
             task: ml

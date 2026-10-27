@@ -83,7 +83,7 @@ def tree_rules(study: Study, cols: list[str], h: int, max_rows: int = 2_000_000,
 
 
 def ml_scan(parts: list[Path], day: pl.DataFrame, universe: str, h: int, train: tuple[date, date], test_start: date,
-            max_rows: int = 2_000_000, seed: int = 0, log: Any = print) -> dict[str, Any]:  # fmt: skip
+            max_rows: int = 800_000, seed: int = 0, log: Any = print) -> dict[str, Any]:  # fmt: skip
     """Gradient boosting on raw numbers. Train on `train` (outcomes ending inside it), evaluate from test_start."""
     import lightgbm as lgb
 
@@ -120,7 +120,10 @@ def ml_scan(parts: list[Path], day: pl.DataFrame, universe: str, h: int, train: 
     tr = (dn >= np.datetime64(train[0])) & (dn <= tr_end)
     te = dn >= np.datetime64(test_start)
     feats = fcols + mcols
-    X = df.select(feats).to_numpy().astype(np.float32)
+    # fill column by column (no full-table copy); the joined table is the largest object in this job
+    X = np.empty((df.height, len(feats)), dtype=np.float32)
+    for j, f in enumerate(feats):
+        X[:, j] = df[f].cast(pl.Float32).to_numpy()
     raw = df[y].to_numpy().astype(np.float32)
     del df
     Y = np.clip(raw, -0.5, 1.0)

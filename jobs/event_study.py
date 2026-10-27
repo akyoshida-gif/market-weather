@@ -4,7 +4,7 @@ Usage:
   python -m jobs.event_study build   --out-dir DIR [--chunks 8] [--only N]
   python -m jobs.event_study analyze --data-dir DIR --universe all|sp500 --window main|recent --task TASK [--run ID]
   python -m jobs.event_study macro   --data-dir DIR [--run ID]
-TASK: singles | s5 | s20 | s60 | tree | ml
+TASK: singles_stock | singles_mkt | s5 | s20 | s60 | tree | ml
 window main  : search 2022-01..2024-12 (judged mainly there), confirm 2025-01..now, older years = lifespan
 window recent: search 2025-01..now only (owner request 2026-10-27), no confirmation period -> at most "観察"
 Results go to R2 research/event_study/<run>/; the log prints progress only (the repository is public).
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import math
 import sys
 import time
 from datetime import UTC, date, datetime
@@ -53,10 +54,21 @@ def labels(data_dir: Path) -> dict[str, str]:
     return out
 
 
+def _clean(o: Any) -> Any:
+    """NaN / infinity -> None so the files are strict JSON (browsers reject NaN)."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_clean(v) for v in o]
+    if isinstance(o, set):
+        return sorted(o)
+    return o
+
+
 def _dump(obj: Any) -> bytes:
-    return json.dumps(
-        obj, ensure_ascii=False, default=lambda o: sorted(o) if isinstance(o, set) else str(o)
-    ).encode("utf-8")
+    return json.dumps(_clean(obj), ensure_ascii=False, allow_nan=False, default=str).encode("utf-8")
 
 
 def save(storage: Any, data_dir: Path, run: str, name: str, obj: Any, upload: bool) -> None:
@@ -141,10 +153,20 @@ def cmd_analyze(args: argparse.Namespace) -> int:
            "search_window": [str(window[0]), str(window[1])], "test_start": str(test_start) if test_start else None,
            "cuts": study.cuts, "n_conditions": len(conds)}  # fmt: skip
     full = args.window == "main"
-    if args.task == "singles":
-        res["singles"] = [study.profile((c,), full=full) for c in conds]
-        res["tried"] = len(conds)
-        log(f"  単独条件 {len(conds)} 種類の集計 {time.time() - t0:.0f}秒")
+    if args.task in ("singles_stock", "singles_mkt"):
+        # market-wide conditions fire for every stock on their day: many events, so a lighter profile
+        todo = stock if args.task == "singles_stock" else mkt
+        light = args.task == "singles_mkt"
+        res["singles"] = []
+        res["tried"] = len(todo)
+        for i, c in enumerate(todo):
+            res["singles"].append(study.profile((c,), full=full and not light))
+            if (i + 1) % 200 == 0:
+                log(f"  単独条件 {i + 1}/{len(todo)} {time.time() - t0:.0f}秒")
+                res["partial"] = True
+                save(storage, data, args.run, f"{name}.json", res, not args.no_upload)
+        res["partial"] = False
+        log(f"  単独条件 {len(todo)} 種類の集計 {time.time() - t0:.0f}秒")
     elif args.task in SEARCH_H:
         h = SEARCH_H[args.task]
         sw, tried = events.stepwise(study, stock, mkt, h, log=log)
@@ -168,8 +190,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elif args.task == "tree":
         sets: dict[tuple[str, ...], set[str]] = {}
         tried = 0
+        # conditions whose data starts after the search window opens would silently shorten the training period
+        tree_cols = [c for c in conds if study.start_rank.get(c, 0) <= study.win_lo]
+        res["tree_conditions"] = len(tree_cols)
         for h in (5, 20, 60):
-            found, leaves = rules.tree_rules(study, conds, h, max_rows=800_000)
+            found, leaves = rules.tree_rules(study, tree_cols, h, max_rows=500_000)
             tried += leaves
             for r in found:
                 sets.setdefault(tuple(r["conds"]), set()).add(f"決定木・{h}日")
@@ -242,7 +267,9 @@ def main() -> int:
     a.add_argument("--data-dir", required=True)
     a.add_argument("--universe", choices=["all", "sp500"], required=True)
     a.add_argument("--window", choices=list(WINDOWS), required=True)
-    a.add_argument("--task", choices=["singles", "tree", "ml", *SEARCH_H], required=True)
+    a.add_argument(
+        "--task", choices=["singles_stock", "singles_mkt", "tree", "ml", *SEARCH_H], required=True
+    )
     a.add_argument("--run", default=datetime.now(UTC).strftime("%Y%m%d"))
     a.add_argument("--no-upload", action="store_true")
     m = sub.add_parser("macro")

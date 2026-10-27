@@ -22,10 +22,12 @@ ROT_ETFS = SECTOR_ETFS + INDUSTRY_ETFS + FACTOR_ETFS
 
 STOPS = {
     "sig_low": "シグナル日の安値の少し下（0.1ATR）",
+    "low5": "直近5日の安値の少し下",
     "low10": "直近10日の安値の少し下",
     "low20": "直近20日の安値の少し下",
     "ma20": "20日線の少し下（0.2ATR）",
     "ma50": "50日線の少し下（0.2ATR）",
+    "atr1_5": "買値から1.5ATR下",
     "atr2": "買値から2ATR下",
     "atr3": "買値から3ATR下",
 }
@@ -251,6 +253,7 @@ def r_outcomes(df: pl.DataFrame) -> pl.DataFrame:
     ent = df[G].to_numpy()
     o, h, lo, c = (df[k].to_numpy().astype(np.float64) for k in ("open", "high", "low", "close"))
     atr = df["atr"].to_numpy().astype(np.float64)
+    ll5 = df.select(C("low").rolling_min(5).over(G))["low"].to_numpy().astype(np.float64)
     ll10 = df.select(C("low").rolling_min(10).over(G))["low"].to_numpy().astype(np.float64)
     ll20 = df.select(C("low").rolling_min(20).over(G))["low"].to_numpy().astype(np.float64)
     ma20, ma50 = df["ma20"].to_numpy().astype(np.float64), df["ma50"].to_numpy().astype(np.float64)
@@ -263,8 +266,10 @@ def r_outcomes(df: pl.DataFrame) -> pl.DataFrame:
     ok1 = idx + 1 <= last
     entry[ok1] = o[idx[ok1] + 1]
     stops = {
-        "sig_low": lo - 0.1 * atr, "low10": ll10 - 0.1 * atr, "low20": ll20 - 0.1 * atr,
-        "ma20": ma20 - 0.2 * atr, "ma50": ma50 - 0.2 * atr, "atr2": entry - 2 * atr, "atr3": entry - 3 * atr,
+        "sig_low": lo - 0.1 * atr, "low5": ll5 - 0.1 * atr,
+        "low10": ll10 - 0.1 * atr, "low20": ll20 - 0.1 * atr,
+        "ma20": ma20 - 0.2 * atr, "ma50": ma50 - 0.2 * atr, "atr1_5": entry - 1.5 * atr,
+        "atr2": entry - 2 * atr, "atr3": entry - 3 * atr,
     }  # fmt: skip
     out: dict[str, np.ndarray] = {}
     hmax = max(R_HORIZONS)

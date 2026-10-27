@@ -52,7 +52,7 @@ def _parts(tmp_path: Path, f_values: list[float] | None = None) -> tuple[list[Pa
 
 
 def _study(tmp_path: Path, **kw: object) -> events.Study:
-    events.MIN_CUT_ROWS, events.MIN_CUT_DAYS = 1, 1
+    events.MIN_CUT_ROWS, events.MIN_CUT_DAYS, events.MAX_BIN_SHARE = 1, 1, 1.0
     parts, day = _parts(tmp_path)
     return events.Study(parts, day, log=lambda *_: None, **kw)  # type: ignore[arg-type]
 

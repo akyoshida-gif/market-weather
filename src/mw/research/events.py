@@ -38,7 +38,9 @@ CUT_END = date(2024, 12, 31)
 MIN_CUT_ROWS = (
     1000  # a numeric stock feature needs this many rows up to CUT_END to define its cut points
 )
-MIN_CUT_DAYS = 250  # same for a market-wide feature (sessions)  # cut points of numeric conditions come from 2010..this date
+MIN_CUT_DAYS = 250  # same for a market-wide feature (sessions)
+MAX_BIN_SHARE = 0.30  # a numeric bin holding on more than this share of rows is dropped
+MIN_VALID_STOP = 0.80  # a stop candidate competes only if it is usable on this share of the events  # cut points of numeric conditions come from 2010..this date
 F_BINS = {"lo10": 0.10, "lo20": 0.20, "hi20": 0.80, "hi10": 0.90}
 M_BINS = {"lo20": 0.20, "hi20": 0.80}
 BIN_LABELS = {
@@ -157,12 +159,29 @@ class Study:
             if len(ref) < MIN_CUT_ROWS:
                 continue
             qs = {k: float(np.quantile(ref, q)) for k, q in F_BINS.items()}
-            self.cuts[c] = qs
+            lo_ref, hi_ref = float(ref.min()), float(ref.max())
+            kept: dict[str, float] = {}
             for k, q in qs.items():
-                m = ok & ((v <= q) if k.startswith("lo") else (v >= q))
+                if k.startswith("lo"):
+                    m = ok & ((v < q) if q <= lo_ref else (v <= q))
+                else:
+                    m = ok & ((v > q) if q >= hi_ref else (v >= q))
+                share = (
+                    float(m[self.date_rank <= cut_rank].mean())
+                    if (self.date_rank <= cut_rank).any()
+                    else 0.0
+                )
+                if (
+                    share == 0.0 or share > MAX_BIN_SHARE
+                ):  # a bin that is (almost) everything or nothing says nothing
+                    continue
                 self.packed[f"{c}__{k}"] = np.packbits(m)
+                kept[k] = q
+            if not kept:
+                continue
+            self.cuts[c] = kept
             first = int(self.date_rank[ok].min()) if ok.any() else 0
-            for k in F_BINS:
+            for k in kept:
                 self.start_rank[f"{c}__{k}"] = max(self.start_rank.get(f"{c}__{k}", 0), first)
             if c in FEATURES:
                 self.feat[c] = v
@@ -295,14 +314,15 @@ class Study:
         ok = np.isfinite(fin)
         if not ok.any():
             return {"n": 0}
+        stopped = fin[ok] <= -0.999
         fin = fin[ok] - np.nan_to_num(self.r[f"costR_{stop}"][idx][ok].astype(np.float32), nan=0.0)
         mfe = self.r[f"{stop}_{h}_mfe"][idx][ok].astype(np.float32)
         n = len(fin)
         k10 = max(1, n // 10)
         top = -np.partition(-fin, k10 - 1)[:k10] if n > k10 else fin
         return {"n": n, "exp": float(fin.mean()), "median": float(np.median(fin)), "win": float((fin > 0).mean()),
-                "stopped": float((fin <= -0.99).mean()), "top10": float(top.mean()), "t": _clustered_t(fin, self.date_rank[idx][ok]),
-                **{f"hit{k}": float((mfe >= k).mean()) for k in (2, 3, 5, 10)}}  # fmt: skip
+                "stopped": float(stopped.mean()), "top10": float(top.mean()), "t": _clustered_t(fin, self.date_rank[idx][ok]),
+                "valid": float(ok.mean()), **{f"hit{k}": float((mfe >= k).mean()) for k in (1, 2, 3, 5, 10)}}  # fmt: skip
 
     def search_mask_h(self, h: int) -> tuple[int, int]:
         """Rank range of the search window whose h-session outcome also ends inside the window."""
@@ -330,40 +350,62 @@ class Study:
             return out
         idx = np.flatnonzero(ev)
         dr = self.date_rank[idx]
-        days, counts = np.unique(dr, return_counts=True)
-        out["top5_share"] = float(np.sort(counts)[-5:].sum() / counts.sum())
-        out["days"] = int(len(days))
-        top5 = days[np.argsort(counts)[-5:]]
-        ex5 = ~np.isin(dr, top5)
+        out["days"] = int(len(np.unique(dr)))
         test = (dr >= self.test_lo) if self.test_lo else np.zeros(len(idx), bool)
         last = int(self.date_rank.max())
         recent1 = dr > last - 252
         for h in horizons or self.horizons:
             lo, hi = self.search_mask_h(h)
             win = (dr >= lo) & (dr <= hi)
+            mid = (lo + hi) // 2
+            # the 5 busiest days are chosen among the evaluated events (search + test), not over all years
+            rng = win | test
+            days, counts = np.unique(dr[rng], return_counts=True)
+            top5 = days[np.argsort(counts)[-5:]] if len(days) else days
+            if len(counts):
+                s_top5 = float(np.sort(counts)[-5:].sum() / counts.sum())
+            ex5 = ~np.isin(dr, top5)
             sl = {
                 "search": idx[win],
+                "search_1st": idx[win & (dr <= mid)],
+                "search_2nd": idx[win & (dr > mid)],
                 "test": idx[test],
                 "recent1": idx[recent1],
-                "ex_top5": idx[ex5 & (win | test)],
+                "ex_top5": idx[ex5 & rng],
                 "all": idx,
             }
             if full:
                 sl |= {name: idx[self.block[idx] == i] for i, (name, _, _) in enumerate(BLOCKS)}
                 sl |= {f"vol{t}": idx[(self.tier[idx] == t) & (win | test)] for t in (1, 2, 3, 4)}
             s: dict[str, Any] = {k: self.stats(v, h) for k, v in sl.items()}
+            s["top5_share"] = s_top5 if len(counts) else None
             if h in self.rh:
                 # pick the stop with the best expectancy in the search window, then report it everywhere
                 cand = {st: self.rstats(sl["search"], st, h) for st in features.STOPS}
-                ok = {k: v for k, v in cand.items() if v.get("n", 0) >= MIN_DEV}
+                # compare stops only on (nearly) the same trades: a stop usable on few events is a different selection
+                n_s = max(1, len(sl["search"]))
+                ok = {
+                    k: v
+                    for k, v in cand.items()
+                    if v.get("n", 0) >= MIN_DEV and v["n"] / n_s >= MIN_VALID_STOP
+                }
                 best = max(ok, key=lambda k: ok[k]["exp"]) if ok else None
                 s["R_by_stop"] = {
-                    k: {"exp": v.get("exp"), "n": v.get("n", 0)} for k, v in cand.items()
+                    k: {"exp": v.get("exp"), "n": v.get("n", 0), "valid": v.get("n", 0) / n_s}
+                    for k, v in cand.items()
                 }
                 if best:
                     rs = {
                         k: self.rstats(sl[k], best, h)
-                        for k in ("search", "test", "recent1", "ex_top5", "all")
+                        for k in (
+                            "search",
+                            "search_1st",
+                            "search_2nd",
+                            "test",
+                            "recent1",
+                            "ex_top5",
+                            "all",
+                        )
                     }
                     if full:
                         rs |= {name: self.rstats(sl[name], best, h) for name, _, _ in BLOCKS}
@@ -397,7 +439,11 @@ def grade(s: dict[str, Any], has_test: bool = True) -> str:
     if not has_test:
         return "観察" if (n_x >= MIN_SLICE and e_x > 0) else "不採用"
     n_t, e_t = val("test")
-    if n_t < MIN_SLICE or e_t <= 0 or e_x <= 0:
+    halves = [val("search_1st"), val("search_2nd")]
+    halves_ok = (
+        all(n >= MIN_SLICE and e > 0 for n, e in halves) if all(n for n, _ in halves) else True
+    )
+    if n_t < MIN_SLICE or e_t <= 0 or e_x <= 0 or not halves_ok:
         return "観察"
     old = [val(b[0]) for b in BLOCKS[:3]]
     old = [e for n, e in old if n >= MIN_SLICE]
@@ -431,7 +477,7 @@ class SearchView:
             prv = (
                 self.st._prev(c.lstrip("!"))[self.idx]
                 if not c.startswith("!")
-                else np.zeros(self.n, bool)
+                else np.ones(self.n, bool)
             )
             start = self.st.start_rank.get(c.lstrip("!"), 0)
             if start:

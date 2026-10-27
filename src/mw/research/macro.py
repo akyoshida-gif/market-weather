@@ -51,6 +51,7 @@ COT_GROUPS = {
 }
 
 POS_WINDOW = 1260  # ~5 years of sessions
+TRENDING = {"MARGIN", "CU_AU"}  # levels drift over the years: use position and change only
 
 
 def _derive(
@@ -155,11 +156,17 @@ def day_table(
     cot_cols: list[tuple[str, str]] = []
     if ck:
         cf = D._read_many(storage, ck).with_columns(external.known_date(C("published_at")))
+        cf = cf.with_columns((C("market") == "rty_cme").cast(pl.Int8).alias("_pref"))
         cf = cf.with_columns(
             pl.when(C("market") == "rty_cme")
             .then(pl.lit("rty"))
             .otherwise(C("market"))
             .alias("market")
+        )
+        cf = (
+            cf.sort(["market", "as_of", "_pref"])
+            .unique(["market", "as_of"], keep="last")
+            .drop("_pref")
         )
         for mk in COT_NAMES:
             sub = cf.filter(C("market") == mk).sort("as_of")
@@ -195,7 +202,7 @@ def day_table(
     exprs: list[pl.Expr] = []
     for sid, name in FRED_NAMES.items():
         if sid in t.columns:
-            exprs += _derive(t, sid, name, sid in RATE_LIKE, labels)
+            exprs += _derive(t, sid, name, sid in RATE_LIKE, labels, level=sid in RATE_LIKE)
     misc = {"VIX": ("VIX", True), "VIX3M": ("VIX（3か月）", True), "VVIX": ("VIXのボラティリティ", True), "SKEW": ("SKEW指数", True),
             "VIXTERM": ("VIX期近÷期先", True), "PC_TOTAL": ("プット・コール比率（全体、5日平均）", True),
             "PC_EQUITY": ("プット・コール比率（個別株、5日平均）", True), "PC_INDEX": ("プット・コール比率（指数、5日平均）", True),
@@ -203,7 +210,7 @@ def day_table(
             "MARGIN_TO_CREDIT": ("信用買い残高÷現金残高", True), "CU_AU": ("銅÷金", False), "BREADTH": ("50日線より上の銘柄の割合", True)}  # fmt: skip
     for col, (name, rl) in misc.items():
         if col in t.columns:
-            exprs += _derive(t, col, name, rl, labels)
+            exprs += _derive(t, col, name, rl, labels, level=col not in TRENDING)
     for col, name in cot_cols:
         exprs += _derive(t, col, name, True, labels)
     for k, (_, _, name) in ratio.items():
@@ -245,6 +252,13 @@ def day_table(
     return out, labels
 
 
+def _split(dates: np.ndarray, dev_end: Any, ahead: int) -> tuple[np.ndarray, np.ndarray]:
+    """dev: the outcome window (ahead sessions after the start) ends by dev_end; test: starts after dev_end."""
+    kd = int((dates <= np.datetime64(dev_end)).sum())
+    i = np.arange(len(dates))
+    return i <= kd - 1 - ahead, i >= kd
+
+
 # ---------------------------------------------------------------- leading-indicator scan
 def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     ok = np.isfinite(a) & np.isfinite(b)
@@ -270,7 +284,6 @@ def leading(day: pl.DataFrame, etf: pl.DataFrame, dev_end: Any, targets: list[st
         how="left",
     ).sort("as_of")
     dates = t["as_of"].to_numpy()
-    dev = dates <= np.datetime64(dev_end)
     feats = [c for c in t.columns if c.startswith("m_")]
     px = {
         s: t[f"px_{s}"].to_numpy().astype(np.float64)
@@ -289,10 +302,11 @@ def leading(day: pl.DataFrame, etf: pl.DataFrame, dev_end: Any, targets: list[st
                 a[i] = px[s][i + lag + h] / px[s][i + lag] - 1
                 if s != "SPY":
                     a[i] -= px["SPY"][i + lag + h] / px["SPY"][i + lag] - 1
+                dev, test = _split(dates, dev_end, lag + h)
                 for f in feats:
                     x = t[f].to_numpy().astype(np.float64)
                     res: dict[str, Any] = {"feature": f, "target": s, "h": h, "lag": lag}
-                    for nm, msk in (("dev", dev), ("test", ~dev)):
+                    for nm, msk in (("dev", dev), ("test", test)):
                         cors = []
                         for off in range(
                             0, h, max(1, h // 4)
@@ -330,7 +344,7 @@ def quintiles(
         - 1
         - ((b[i + lag + h] / b[i + lag] - 1) if target != "SPY" else 0)
     )
-    dev = t["as_of"].to_numpy() <= np.datetime64(dev_end)
+    dev, test = _split(t["as_of"].to_numpy(), dev_end, lag + h)
     q = np.nanquantile(x[dev], [0.2, 0.4, 0.6, 0.8])
     bins = np.digitize(x, q)
     res: dict[str, Any] = {
@@ -340,7 +354,7 @@ def quintiles(
         "lag": lag,
         "cuts": q.tolist(),
     }
-    for nm, msk in (("dev", dev), ("test", ~dev)):
+    for nm, msk in (("dev", dev), ("test", test)):
         res[nm] = [{"q": k + 1, "n": int((msk & (bins == k) & np.isfinite(x) & np.isfinite(a)).sum()),
                     "mean": float(np.nanmean(a[msk & (bins == k) & np.isfinite(x)])) if (msk & (bins == k) & np.isfinite(a)).any() else None}
                    for k in range(5)]  # fmt: skip
@@ -363,7 +377,6 @@ def rotation(
     rs = {s: (t[f"px_{s}"] / t["px_SPY"]).to_numpy().astype(np.float64) for s in syms}
     n = t.height
     dates = t["as_of"].to_numpy()
-    dev = dates <= np.datetime64(dev_end)
 
     def chg(x: np.ndarray, k: int) -> np.ndarray:
         o = np.full(n, np.nan)
@@ -405,7 +418,8 @@ def rotation(
                     last = j
             idx = np.array(keep, dtype=int)
             for h in horizons:
-                for nm, msk in (("dev", dev), ("test", ~dev)):
+                dev_h, test_h = _split(dates, dev_end, h)
+                for nm, msk in (("dev", dev_h), ("test", test_h)):
                     sel = idx[msk[idx]] if len(idx) else idx
                     if len(sel) == 0:
                         continue
