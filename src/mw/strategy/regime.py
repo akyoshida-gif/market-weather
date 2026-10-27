@@ -29,6 +29,11 @@ def _chg(col: str, n: int) -> pl.Expr:
     return C(col) / C(col).shift(n) - 1
 
 
+def ny_known_date(pub: pl.Expr) -> pl.Expr:
+    """First New York session date whose close comes after the publication (16:00 or later -> next day)."""
+    return (pub + pl.duration(hours=8)).dt.convert_time_zone("America/New_York").dt.date()
+
+
 def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl.DataFrame:
     syms = [
         "SPY",
@@ -83,10 +88,9 @@ def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl
         )
         r = r.join(v, on="as_of", how="left")
     if fred.height:
-        # align each series by publication time: value known at the close of date t
-        f = fred.with_columns(
-            C("published_at").dt.convert_time_zone("America/New_York").dt.date().alias("known")
-        )
+        # align each series by publication time: usable at the close of date t only if published
+        # before 16:00 New York on t (later releases are usable from the next day; ADR-0016)
+        f = fred.with_columns(ny_known_date(C("published_at")).alias("known"))
         series = {"MACRO:FRED:BAMLH0A0HYM2": "hy", "MACRO:FRED:DGS10": "y10", "MACRO:FRED:DGS2": "y2",
                   "MACRO:FRED:T10Y2Y": "curve", "MACRO:FRED:DFII10": "real10", "MACRO:FRED:NFCI": "nfci",
                   "MACRO:FRED:DTWEXBGS": "dxy", "MACRO:FRED:DCOILWTICO": "wti", "MACRO:FRED:DFF": "ff"}  # fmt: skip

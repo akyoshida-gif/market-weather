@@ -132,3 +132,9 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 - FRED series added: DGS3MO, DGS1, DGS5, T10Y3M, SOFR, RRPONTSYD, BAA10Y, WALCL, WTREGEN, M2SL, ICSA, CPIAUCSL, UNRATE, INDPRO, UMCSENT, PCOPPUSDM, DHHNGSP. Monthly series get conservative publication lags (days after the 1st of the month: M2 55, CPI 45, UNRATE 40, INDPRO 48, UMCSENT 35, copper 45). Latest vintage only (revisions not modelled; small for these series).
 - Cross-asset regime features (defensive vs cyclical sector ratio, small vs large, equal vs cap weight, bonds vs stocks, gold, oil, USD) are computed from ETF prices already collected.
 - SEC submissions backfill now writes each date file once at the end (rewriting ~1,500 date files per 200-CIK batch exceeded the 4h job limit).
+
+## ADR-0016 | 2026-10-26 | accepted | FRED values published after the US close are usable from the next session
+
+- Found in the Method A code review: `regime.us_regime` treated a FRED value as usable on the New York date of `published_at`. FRED's publication rule is observation date + lag at 23:00 UTC (18:00-19:00 New York), i.e. after the 16:00 close, so the market regime used rates (10y yield trend, 10y-2y curve, etc.) about one session early.
+- Fix (owner approved 2026-10-26): `regime.ny_known_date` = New York date of `published_at + 8h` (16:00 or later -> next day), the same rule as `research.external.known_date`. Applies to live paper trading and the event study.
+- PIT rule itself is unchanged (a value is usable only after it was published); this corrects its implementation.
