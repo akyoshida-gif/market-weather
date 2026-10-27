@@ -12,13 +12,15 @@ each row) restores the price of the day (close * split_fac) for the $1 rule, cos
 from __future__ import annotations
 
 import gc
+import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
 from mw.report import dashboard as D
-from mw.research import events, external, technical
+from mw.research import events, external, features, macro, technical
 from mw.strategy import regime
 
 C = pl.col
@@ -131,6 +133,35 @@ def bad_windows(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(out)
 
 
+KEEP_BASE = ["entity_id", "as_of", "close", "raw_close", "atr", "eligible", "in_sp500", "contig"]
+
+
+def external_features() -> list[pl.Expr]:
+    """Numeric versions of the non-price data (after external.* joins)."""
+    days = lambda col: (C("as_of") - C(col)).dt.total_days()  # noqa: E731
+    return [
+        C("mcap").log10().alias("f_mcap"),
+        (C("short_interest") / C("shares_out")).alias("f_si_pct"),
+        C("days_to_cover").alias("f_dtc"),
+        C("svr5").alias("f_svr5"),
+        (C("svr5") - C("svr60")).alias("f_svr_chg"),
+        (C("ftd_max") / (C("vol20") / C("split_fac"))).alias("f_ftd"),
+        C("ins_value30").fill_null(0).log1p().alias("f_ins_value"),
+        days("last_earn").alias("f_days_since_earn"),
+        (C("shares_adj") / C("shares_adj_1y") - 1).alias("f_share_growth"),
+    ]
+
+
+def sic_table(storage: Any) -> pl.DataFrame:
+    key = "silver/sec_company/market=US/latest.parquet"
+    if not storage.exists(key):
+        return pl.DataFrame(schema={"entity_id": pl.String, "k_sic2": pl.Int16})
+    s = storage.read_parquet(key).filter(C("entity_id").is_not_null() & C("sic").is_not_null())
+    return s.select(
+        "entity_id", C("sic").str.slice(0, 2).cast(pl.Int16, strict=False).alias("k_sic2")
+    ).unique("entity_id")
+
+
 def build_us(
     storage: Any,
     out_dir: Path,
@@ -139,14 +170,31 @@ def build_us(
     min_px: float = 1.0,
     only: int | None = None,
 ) -> list[Path]:
+    """Writes part_<i>.parquet (stock rows), day.parquet (market-wide m_* per session), etf.parquet."""
     out_dir.mkdir(parents=True, exist_ok=True)
     prices = D._read_years(storage, "prices_daily", "US").select(PRICE_COLS)
     vol = D._read_years(storage, "vol_indices", "US")
     fred = D._read_years(storage, "fred", "GLOBAL")
     etfs = etf_ids(storage)
     mkt = market_conditions(prices, vol, fred, etfs)
-    del vol
+    del vol, fred
+    etf = features.etf_returns(prices, sorted({x.split(":", 1)[1] for x in etfs} | {"SPY"}))
+    etf.write_parquet(out_dir / "etf.parquet")
+    rs_long = features.rs_table(etf)
+    spy = etf.select("as_of", C("px_SPY").alias("spy_close"))
+    br = (
+        prices.filter(~C("entity_id").is_in(list(etfs))).select("entity_id", "as_of", "close").sort(["entity_id", "as_of"])
+        .with_columns(C("close").rolling_mean(50).over("entity_id").alias("ma50")).filter(C("ma50").is_not_null())
+        .group_by("as_of").agg((C("close") > C("ma50")).mean().alias("BREADTH")).sort("as_of")
+    )  # fmt: skip
+    day, day_labels = macro.day_table(storage, prices, etf, br)
+    day.write_parquet(out_dir / "day.parquet")
+    (out_dir / "day_labels.json").write_text(
+        json.dumps(day_labels, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"  市場全体の表：{day.height:,}日・{day.width - 1}項目", flush=True)
     sp = sp500_flag(storage)
+    sic = sic_table(storage)
     ents = sorted(set(prices["entity_id"].unique().to_list()) - etfs)
     parts: list[Path] = []
     for i in range(chunks):
@@ -159,16 +207,17 @@ def build_us(
             (C("open") / C("pc") - 1).alias("gap"),
             C("as_of").shift(1).over("entity_id").alias("prev_as_of"),
             split_factor(),
-            (C("close") / C("close").shift(5).over("entity_id") - 1)
-            .cast(pl.Float32)
-            .alias("f_ret5"),
-            (C("close") / C("hh252p") - 1).cast(pl.Float32).alias("f_dist_hi"),
-            (C("atr") / C("close")).cast(pl.Float32).alias("f_atr_pct"),
-            C("dvol20").cast(pl.Float32).alias("f_dvol20"),
-            C("ret63").cast(pl.Float32).alias("f_ret63"),
         ).with_columns((C("close") * C("split_fac")).alias("raw_close"))
+        df = features.stock_features(df, spy)
+        df = features.sector_assign(df, etf, rs_long)
         df = events.forward_raw(df)
+        df = features.r_outcomes(df)
         df = bad_windows(df)
+        # R outcomes share the data-error windows of the plain returns
+        df = df.with_columns(
+            [pl.when(C(f"ret_{h}").is_null()).then(None).otherwise(C(f"r_{s}_{h}_{k}")).alias(f"r_{s}_{h}_{k}")
+             for s in features.STOPS for h in features.R_HORIZONS for k in ("fin", "mfe")]
+        )  # fmt: skip
         # dollar volume is split-invariant; the $1 rule uses the price of the day
         df = df.with_columns(
             (
@@ -180,6 +229,10 @@ def build_us(
             .fill_null(False)
             .alias("eligible")
         )
+        # the previous session was also eligible (onsets of numeric conditions need a real previous row)
+        df = df.with_columns(
+            C("eligible").shift(1).over("entity_id").fill_null(False).alias("contig")
+        )
         # non-price conditions (order matters: shares before short interest)
         df = external.shares(storage, df)
         df = external.short_interest(storage, df)
@@ -187,7 +240,8 @@ def build_us(
         df = external.fails(storage, df)
         df = external.sec_events(storage, df)
         df = external.insiders(storage, df)
-        df = df.join(mkt, on="as_of", how="left")
+        df = df.with_columns([e.cast(pl.Float32) for e in external_features()])
+        df = df.join(mkt, on="as_of", how="left").join(sic, on="entity_id", how="left")
         # S&P 500 point-in-time membership
         m = (
             df.select("entity_id", "as_of")
@@ -208,8 +262,20 @@ def build_us(
         df = df.with_columns(
             [C(c).shift(1).over("entity_id").fill_null(False).alias("p_" + c[2:]) for c in conds]
         )
-        keep = ["entity_id", "as_of", "close", "raw_close", "atr", "eligible", "in_sp500"] + conds + ["p_" + c[2:] for c in conds] + [
-            c for c in df.columns if c.startswith("f_")] + [f"{k}_{h}" for h in events.HORIZONS for k in ("ret", "mfe", "mae")]  # fmt: skip
+        fcols = [c for c in df.columns if c.startswith("f_")]
+        df = df.with_columns(
+            [
+                pl.when(C(c).is_infinite() | C(c).is_nan())
+                .then(None)
+                .otherwise(C(c))
+                .cast(pl.Float32)
+                .alias(c)
+                for c in fcols
+            ]
+        )
+        keep = KEEP_BASE + ["k_sic2"] + conds + ["p_" + c[2:] for c in conds] + fcols + [
+            f"{k}_{h}" for h in events.HORIZONS for k in ("ret", "mfe", "mae")] + [
+            c for c in df.columns if c.startswith(("r_", "rp_"))]  # fmt: skip
         df = df.filter(C("eligible")).select(keep)
         p = out_dir / f"part_{i}.parquet"
         df.write_parquet(p)
@@ -220,9 +286,76 @@ def build_us(
     return parts
 
 
-def finalize(parts: list[Path]) -> pl.DataFrame:
-    df = pl.concat([pl.read_parquet(p) for p in parts], how="diagonal_relaxed").sort(
-        ["entity_id", "as_of"]
+RANKED = {
+    "f_ret20": "f_rank_ret20",
+    "f_ret63": "f_rank_ret63",
+    "f_ret126": "f_rank_ret126",
+    "f_dvol20": "f_rank_dvol",
+}
+
+
+def finalize(parts: list[Path]) -> list[Path]:
+    """Cross-sectional pieces computed over all parts without loading everything at once:
+    same-day means (excess returns), cross-sectional ranks, volatility tiers. Parts are rewritten in place."""
+    scan = pl.scan_parquet([str(p) for p in parts])
+    rets = [f"ret_{h}" for h in events.HORIZONS]
+    day_all = scan.group_by("as_of").agg([C(r).mean().alias(f"_d_{r}") for r in rets]).collect()
+    day_sp = (
+        scan.filter(C("in_sp500"))
+        .group_by("as_of")
+        .agg([C(r).mean().alias(f"_s_{r}") for r in rets])
+        .collect()
     )
-    df = events.add_excess(df)
-    return events.vol_tier(df)
+    ranks = (
+        scan.select("entity_id", "as_of", *RANKED)
+        .with_columns(
+            [
+                (C(a).rank() / C(a).count()).over("as_of").cast(pl.Float32).alias(b)
+                for a, b in RANKED.items()
+            ]
+        )
+        .select("entity_id", "as_of", *RANKED.values())
+        .collect()
+    )
+    v = C("atr") / C("close")
+    q = (
+        scan.filter(C("as_of") <= date(2024, 12, 31))
+        .select(
+            v.quantile(0.25).alias("a"), v.quantile(0.5).alias("b"), v.quantile(0.75).alias("c")
+        )
+        .collect()
+        .row(0)
+    )
+    for p in parts:
+        df = (
+            pl.read_parquet(p)
+            .join(day_all, on="as_of", how="left")
+            .join(day_sp, on="as_of", how="left")
+            .join(ranks, on=["entity_id", "as_of"], how="left")
+        )
+        df = df.with_columns(
+            [
+                (C(f"ret_{h}") - C(f"_d_ret_{h}")).cast(pl.Float32).alias(f"xret_{h}")
+                for h in events.HORIZONS
+            ]
+            + [
+                (C(f"ret_{h}") - C(f"_s_ret_{h}")).cast(pl.Float32).alias(f"xsp_{h}")
+                for h in events.HORIZONS
+            ]
+            + [
+                pl.when(v <= q[0])
+                .then(1)
+                .when(v <= q[1])
+                .then(2)
+                .when(v <= q[2])
+                .then(3)
+                .otherwise(4)
+                .cast(pl.Int8)
+                .alias("vol_tier")
+            ]
+        )
+        df = df.drop([c for c in df.columns if c.startswith(("_d_", "_s_"))])
+        df.sort(["entity_id", "as_of"]).write_parquet(p)
+        del df
+        gc.collect()
+    return parts

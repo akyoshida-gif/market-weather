@@ -1,20 +1,21 @@
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-from mw.research import build, events, external
+from mw.research import build, events, external, features
 from mw.strategy import regime
 
 
-def _frame() -> pl.DataFrame:
+def _parts(tmp_path: Path, f_values: list[float] | None = None) -> tuple[list[Path], pl.DataFrame]:
     days = [date(2019, 1, 1) + timedelta(days=i) for i in range(6)]
     rows = []
     for ent, flags in (("US:A", [0, 1, 1, 0, 1, 1]), ("US:B", [1, 1, 0, 0, 0, 1])):
         prev = (
             1 if ent == "US:B" else 0
         )  # B was already true on the (dropped) row before its first kept row
-        for d, f in zip(days, flags, strict=True):
+        for i, (d, f) in enumerate(zip(days, flags, strict=True)):
             rows.append(
                 {
                     "entity_id": ent,
@@ -23,55 +24,90 @@ def _frame() -> pl.DataFrame:
                     "p_x": bool(prev),
                     "c_y": True,
                     "p_y": True,
-                    "close": 30.0,
                     "raw_close": 30.0,
                     "in_sp500": ent == "US:A",
                     "vol_tier": 2,
+                    "contig": i > 0,
+                    "f_z": (f_values or [float(i)] * 6)[i] if ent == "US:A" else float(i),
                 }
             )
             prev = f
-    df = pl.DataFrame(rows)
-    return df.with_columns(
+    df = pl.DataFrame(rows).with_columns(
         [
             pl.lit(0.01, pl.Float32).alias(f"{k}_{h}")
             for h in events.HORIZONS
             for k in ("ret", "mfe", "mae", "xret", "xsp")
         ]
+        + [
+            pl.lit(0.5, pl.Float32).alias(f"r_{s}_{h}_{k}")
+            for s in features.STOPS
+            for h in features.R_HORIZONS
+            for k in ("fin", "mfe")
+        ]
+        + [pl.lit(0.05, pl.Float32).alias(f"rp_{s}") for s in features.STOPS]
     )
+    p = tmp_path / "part_0.parquet"
+    df.write_parquet(p)
+    day = pl.DataFrame({"as_of": days, "m_q": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
+    return [p], day
 
 
-def test_onset_uses_previous_session_state() -> None:
-    st = events.Study(_frame(), ["c_x", "c_y"])
+def _study(tmp_path: Path, **kw: object) -> events.Study:
+    events.MIN_CUT_ROWS, events.MIN_CUT_DAYS, events.MAX_BIN_SHARE = 1, 1, 1.0
+    parts, day = _parts(tmp_path)
+    return events.Study(parts, day, log=lambda *_: None, **kw)  # type: ignore[arg-type]
+
+
+def test_onset_uses_previous_session_state(tmp_path: Path) -> None:
+    st = _study(tmp_path)
     ev = st.events(("c_x",))
     # A: days 1 and 4; B: day 0 is NOT an onset (true on the previous session), day 5 is
     assert np.flatnonzero(ev).tolist() == [1, 4, 11]
-    # c_y is always true, so the combination starts when c_x starts
     assert np.flatnonzero(st.events(("c_x", "c_y"))).tolist() == [1, 4, 11]
     # NOT conditions only filter the state: no positive condition -> no events
     assert st.events(("!c_x",)).sum() == 0
-    # c_y with c_x false: c_y never "starts" (it was true the session before)
     assert st.events(("c_y", "!c_x")).sum() == 0
 
 
-def test_data_start_excludes_earlier_rows() -> None:
-    st = events.Study(_frame(), ["c_x"], starts={"c_x": date(2019, 1, 4)})
+def test_data_start_excludes_earlier_rows(tmp_path: Path) -> None:
+    st = _study(tmp_path, starts={"c_x": date(2019, 1, 4)})
     assert np.flatnonzero(st.events(("c_x",))).tolist() == [4, 11]
 
 
-def test_sp500_universe_filters_rows() -> None:
-    st = events.Study(_frame(), ["c_x"], universe="sp500")
+def test_sp500_universe_filters_rows(tmp_path: Path) -> None:
+    st = _study(tmp_path, universe="sp500")
     assert st.n == 6
 
 
-def test_excess_return_per_universe() -> None:
-    df = pl.DataFrame(
-        {
-            "as_of": [date(2020, 1, 2)] * 3,
-            "in_sp500": [True, True, False],
-            **{f"ret_{h}": [0.01, 0.03, 0.20] for h in events.HORIZONS},
-        }
-    )
-    out = events.add_excess(df)
+def test_market_wide_condition_starts_on_its_day(tmp_path: Path) -> None:
+    st = _study(tmp_path)
+    # m_q >= its 80% cut (from the data, ~5.0) holds on the last day(s): every stock "starts" there
+    ev = st.events(("m_q__hi20",))
+    days = {int(st.date_rank[i]) for i in np.flatnonzero(ev)}
+    assert days == {min(int(r) for r in st.date_rank[st._cond("m_q__hi20")])}
+
+
+def test_numeric_bin_needs_a_real_previous_row(tmp_path: Path) -> None:
+    st = _study(tmp_path)
+    # first row of each stock has contig = False -> no onset there even if the bin holds
+    ev = st.events(("f_z__lo20",))
+    assert not ev[0] and not ev[6]
+
+
+def test_excess_return_per_universe(tmp_path: Path) -> None:
+    rows = {
+        "entity_id": ["US:A", "US:B", "US:C"],
+        "as_of": [date(2020, 1, 2)] * 3,
+        "in_sp500": [True, True, False],
+        "atr": [1.0, 1.0, 1.0],
+        "close": [10.0, 10.0, 10.0],
+        **{f"ret_{h}": [0.01, 0.03, 0.20] for h in events.HORIZONS},
+        **{f: [0.1, 0.2, 0.3] for f in build.RANKED},
+    }
+    p = tmp_path / "part_0.parquet"
+    pl.DataFrame(rows).write_parquet(p)
+    build.finalize([p])
+    out = pl.read_parquet(p)
     assert abs(out["xsp_20"][0] - (-0.01)) < 1e-6  # vs S&P 500 mean 0.02
     assert abs(out["xret_20"][0] - (0.01 - 0.08)) < 1e-6  # vs all-stock mean 0.08
 
@@ -87,13 +123,42 @@ def test_forward_returns_start_next_open() -> None:
         }
     )
     out = events.forward_raw(df)
-    # signal day 0: entry = open of day 1 (11); ret_1 = close day 1 / 11 - 1 = 0
     assert abs(out["ret_1"][0]) < 1e-6
-    # ret_3 = close day 3 (13) / 11 - 1; mfe_3 = max high days 1-3 (14) / 11 - 1; mae_3 = min low (10.5) / 11 - 1
     assert abs(out["ret_3"][0] - (13 / 11 - 1)) < 1e-6
     assert abs(out["mfe_3"][0] - (14 / 11 - 1)) < 1e-6
     assert abs(out["mae_3"][0] - (10.5 / 11 - 1)) < 1e-6
-    assert out["ret_3"][1] is None  # window runs past the data
+    assert out["ret_3"][1] is None
+
+
+def test_r_outcomes_stop_and_gap() -> None:
+    n = 130
+    o = np.full(n, 100.0)
+    h = np.full(n, 101.0)
+    lo = np.full(n, 99.0)
+    c = np.full(n, 100.0)
+    lo[3] = 90.0  # day 3 touches any stop between 90 and 99
+    df = pl.DataFrame(
+        {
+            "entity_id": ["US:A"] * n,
+            "open": o,
+            "high": h,
+            "low": lo,
+            "close": c,
+            "atr": np.full(n, 2.0),
+            "ma20": np.full(n, 95.0),
+            "ma50": np.full(n, 90.0),
+        }
+    )
+    out = features.r_outcomes(df)
+    # signal on row 0, entry = open of row 1 = 100; atr2 stop = 96 (R = 4) -> hit on row 3 -> -1R
+    assert abs(out["r_atr2_5_fin"][0] - (-1.0)) < 1e-6
+    # ma20 stop = 95 - 0.4 = 94.6 -> also hit on row 3
+    assert abs(out["r_ma20_5_fin"][0] - (-1.0)) < 1e-6
+    # ma50 stop = 89.6 -> not hit; R = 10.4; close 100 -> 0R; best high 101 -> ~0.096R
+    assert abs(out["r_ma50_5_fin"][0]) < 1e-6
+    assert abs(out["r_ma50_5_mfe"][0] - 1 / 10.4) < 1e-4
+    # sig_low stop = 99 - 0.2 = 98.8 -> R = 1.2 < 0.5*ATR? no (1.2 >= max(1.0, 1.0)) -> valid, hit on row 3
+    assert abs(out["r_sig_low_5_fin"][0] - (-1.0)) < 1e-6
 
 
 def test_known_date_close_boundary() -> None:
@@ -131,32 +196,23 @@ def test_split_factor_restores_price_of_the_day() -> None:
         }
     )
     out = df.with_columns(build.split_factor())
-    # adjusted 25 before a 4:1 split was really 100
     assert out["split_fac"].to_list() == [4.0, 4.0, 1.0, 1.0]
 
 
 def test_grade_rules() -> None:
-    def s(net: float, n: int = 50) -> dict:
-        return {"n": n, "net": net, "xmean": net}
+    def s(v: float, n: int = 50) -> dict:
+        return {"n": n, "net": v, "xmean": v}
 
-    base = {"all": s(0.01), "dev": s(0.01), "recent3": s(0.01), "recent1": s(0.01)}
-    blocks = {b[0]: s(0.01) for b in events.BLOCKS}
-    assert events.grade(base | blocks) == "有力"
-    blocks["2010-13"] = s(-0.01)
-    blocks["2014-17"] = s(-0.01)
-    assert events.grade(base | blocks) == "最近有効"
-    assert events.grade(base | blocks | {"recent1": s(-0.01)}) == "候補"
-    assert (
-        events.grade(
-            {"all": s(-0.01), "dev": s(0.01), "recent3": s(-0.01), "recent1": s(-0.01)} | blocks
-        )
-        == "不採用"
-    )
-    # too few development events -> reference only
-    assert events.grade(base | blocks | {"dev": s(0.01, n=10)}) == "参考"
-    # data only in the last two blocks: both positive is enough
-    short = {"2010-13": {"n": 0}, "2014-17": {"n": 0}, "2018-21": s(0.01), "2022-26": s(0.01)}
-    assert events.grade(base | short) == "有力"
+    blocks_up = {b[0]: s(0.01) for b in events.BLOCKS}
+    base = {"search": s(0.01), "test": s(0.01), "ex_top5": s(0.01)}
+    assert events.grade(base | blocks_up) == "主力候補（長寿命）"
+    blocks_new = blocks_up | {"2010-13": s(-0.01), "2014-17": s(-0.01), "2018-21": s(-0.01)}
+    assert events.grade(base | blocks_new) == "主力候補（新しい傾向）"
+    assert events.grade(base | blocks_up | {"test": s(-0.01)}) == "観察"
+    assert events.grade(base | blocks_up | {"search": s(-0.01)}) == "不採用"
+    assert events.grade(base | blocks_up | {"search": s(0.01, n=10)}) == "参考"
+    # 2025-only search: no confirmation period -> at most "observe"
+    assert events.grade(base, has_test=False) == "観察"
 
 
 def test_cost_by_price() -> None:
