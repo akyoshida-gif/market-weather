@@ -1,33 +1,50 @@
-"""Method A: event study (VALIDATION_PLAN §3).
+"""Method A: event study (VALIDATION_PLAN §3, §5, §6).
 
 For every (stock, day) row and horizon h (sessions), starting at the NEXT session's open:
   ret_h  = close[t+h] / open[t+1] - 1
-  mfe_h  = max(high[t+1 .. t+h]) / open[t+1] - 1      (largest gain available)
-  mae_h  = min(low[t+1 .. t+h]) / open[t+1] - 1       (largest drawdown suffered)
-  xret_h = ret_h - mean(ret_h of the universe's eligible stocks that day)   (market/day effect removed)
-           (all US stocks for universe "all"; S&P 500 members only for universe "sp500")
-An event is the first day a combination of positive conditions becomes true for a stock (onset),
-judged against the stock's previous session; "!c" (NOT c) conditions only filter the state that day.
-Rows before a condition's data starts are "no data" and are excluded, not counted as false.
-Results are reported by period block, last 3 years / last 1 year, and volatility tier.
+  mfe_h  = max(high[t+1 .. t+h]) / open[t+1] - 1
+  mae_h  = min(low[t+1 .. t+h]) / open[t+1] - 1
+  xret_h = ret_h - same-day mean of the universe (all US stocks, or S&P 500 members for that universe)
+  R outcomes per stop candidate (features.STOPS): the trade's result in units of its stop distance.
+Conditions come in three kinds:
+  c_*                  yes/no conditions (previous-session state stored as p_*)
+  f_*__lo10/lo20/hi20/hi10   a stock's numeric feature in its bottom/top 10-20% (cut points from 2010-2024)
+  m_*__lo20/hi20/up/dn       a market-wide feature (per session) low/high, or rising/falling
+An event is the first day a combination of positive conditions becomes true for a stock (onset);
+"!x" (NOT x) only filters the state that day. Rows before a condition's data starts are excluded.
 """
 
 from __future__ import annotations
 
 import math
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import polars as pl
 
+from mw.research import features
+
 HORIZONS = [1, 3, 5, 10, 20, 40, 60, 120]
 BLOCKS = [("2010-13", date(2010, 1, 1), date(2013, 12, 31)), ("2014-17", date(2014, 1, 1), date(2017, 12, 31)),
-          ("2018-21", date(2018, 1, 1), date(2021, 12, 31)), ("2022-26", date(2022, 1, 1), date(2099, 1, 1))]  # fmt: skip
+          ("2018-21", date(2018, 1, 1), date(2021, 12, 31)), ("2022-24", date(2022, 1, 1), date(2024, 12, 31)),
+          ("2025-", date(2025, 1, 1), date(2099, 1, 1))]  # fmt: skip
 FEATURES = {"f_atr_pct": "値動きの大きさ（ATR÷株価）", "f_dvol20": "20日平均の売買代金", "f_ret5": "直前5日の騰落率",
             "f_ret63": "直前3か月の騰落率", "f_dist_hi": "52週高値からの距離"}  # fmt: skip
-MIN_DEV = 30  # minimum events in the development period (VALIDATION_PLAN §2); fewer -> "参考"
-MIN_SLICE = 10  # a period block / recent window counts in the grade only with this many events
+MIN_DEV = 30  # minimum events in the search window (VALIDATION_PLAN §4); fewer -> "参考"
+MIN_SLICE = 10  # a period counts in the grade only with this many events
+CUT_END = date(2024, 12, 31)  # cut points of numeric conditions come from 2010..this date
+F_BINS = {"lo10": 0.10, "lo20": 0.20, "hi20": 0.80, "hi10": 0.90}
+M_BINS = {"lo20": 0.20, "hi20": 0.80}
+BIN_LABELS = {
+    "lo10": "下位10%",
+    "lo20": "下位20%",
+    "hi20": "上位20%",
+    "hi10": "上位10%",
+    "up": "上昇中",
+    "dn": "低下中",
+}
 
 
 def forward_raw(df: pl.DataFrame) -> pl.DataFrame:
@@ -45,50 +62,6 @@ def forward_raw(df: pl.DataFrame) -> pl.DataFrame:
             (fwd_low / entry - 1).cast(pl.Float32).alias(f"mae_{h}"),
         ]
     return df.with_columns(cols)
-
-
-def add_excess(df: pl.DataFrame) -> pl.DataFrame:
-    """xret_h: minus the same-day mean of all rows; xsp_h: minus the same-day mean of S&P 500 rows."""
-    day = df.group_by("as_of").agg([pl.col(f"ret_{h}").mean().alias(f"_d_{h}") for h in HORIZONS])
-    sp = (
-        df.filter(pl.col("in_sp500"))
-        .group_by("as_of")
-        .agg([pl.col(f"ret_{h}").mean().alias(f"_s_{h}") for h in HORIZONS])
-    )
-    df = df.join(day, on="as_of", how="left").join(sp, on="as_of", how="left")
-    return df.with_columns(
-        [
-            (pl.col(f"ret_{h}") - pl.col(f"_d_{h}")).cast(pl.Float32).alias(f"xret_{h}")
-            for h in HORIZONS
-        ]
-        + [
-            (pl.col(f"ret_{h}") - pl.col(f"_s_{h}")).cast(pl.Float32).alias(f"xsp_{h}")
-            for h in HORIZONS
-        ]
-    ).drop([f"_d_{h}" for h in HORIZONS] + [f"_s_{h}" for h in HORIZONS])
-
-
-def vol_tier(df: pl.DataFrame, cut_end: date = date(2021, 12, 31)) -> pl.DataFrame:
-    """Volatility tier 1 (calm) .. 4 (wild) by ATR/close; cut points from rows up to cut_end."""
-    v = pl.col("atr") / pl.col("close")
-    q = (
-        df.filter(pl.col("as_of") <= cut_end)
-        .select(
-            v.quantile(0.25).alias("a"), v.quantile(0.5).alias("b"), v.quantile(0.75).alias("c")
-        )
-        .row(0)
-    )
-    return df.with_columns(
-        pl.when(v <= q[0])
-        .then(1)
-        .when(v <= q[1])
-        .then(2)
-        .when(v <= q[2])
-        .then(3)
-        .otherwise(4)
-        .cast(pl.Int8)
-        .alias("vol_tier")
-    )
 
 
 def cost_of(close: np.ndarray) -> np.ndarray:
@@ -109,73 +82,173 @@ def _clustered_t(x: np.ndarray, ranks: np.ndarray) -> float:
     return float(dm.mean() / (sd / math.sqrt(len(dm)))) if sd > 0 else 0.0
 
 
-class Study:
-    """Numpy view of the dataset for fast evaluation of many condition sets.
+def _first_rank(dates_sorted: np.ndarray, d: Any) -> int:
+    return int(np.searchsorted(dates_sorted, np.datetime64(d))) + 1
 
-    Conditions (today and previous session) are stored bit-packed; a name prefixed with "!" means NOT.
-    starts: first date each condition has data (None / missing = full history).
+
+class Study:
+    """Numpy view of the dataset for fast evaluation of many condition sets (memory-bounded loading).
+
+    window: (search_start, search_end) — patterns are searched and judged mainly on this window;
+    test_start: first date of the untouched confirmation period (None for the 2025-only search).
     """
 
-    def __init__(self, df: pl.DataFrame, cond_cols: list[str], universe: str = "all", dev_end: date = date(2021, 12, 31),
-                 starts: dict[str, Any] | None = None) -> None:  # fmt: skip
-        if universe == "sp500":
-            df = df.filter(pl.col("in_sp500"))
+    def __init__(self, parts: list[Path], day: pl.DataFrame, universe: str = "all",
+                 window: tuple[date, date] = (date(2022, 1, 1), date(2024, 12, 31)), test_start: date | None = date(2025, 1, 1),
+                 starts: dict[str, Any] | None = None, horizons: list[int] | None = None, log: Any = print) -> None:  # fmt: skip
         self.universe = universe
-        self.n = df.height
-        self.cond_cols = list(cond_cols)
-        self.packed = {c: np.packbits(df[c].fill_null(False).to_numpy()) for c in cond_cols}
-        self.packed_prev = {
-            c: np.packbits(df["p_" + c[2:]].fill_null(False).to_numpy()) for c in cond_cols
-        }
-        d = df["as_of"]
-        self.date_rank = d.rank("dense").cast(pl.Int32).to_numpy()
-        udates = d.unique().sort()
-        last = d.max()
-        self.last = last
-        self.dev_end = dev_end
-        self.dev_rank = int((udates <= dev_end).sum())  # last development-period date rank
-        self.start_rank: dict[str, int] = {}
-        for c, s in (starts or {}).items():
-            if c in self.packed and s is not None:
-                self.start_rank[c] = int((udates < s).sum()) + 1
-        self.recent3 = (d >= date(last.year - 3, last.month, 1)).to_numpy()
-        self.recent1 = (d >= date(last.year - 1, last.month, 1)).to_numpy()
-        self.dev = (d <= dev_end).to_numpy()
+        scan = pl.scan_parquet([str(p) for p in parts])
+        if universe == "sp500":
+            scan = scan.filter(pl.col("in_sp500"))
+        self._scan = scan
+        base = scan.select("entity_id", "as_of", "raw_close", "vol_tier", "contig").collect()
+        self.n = base.height
+        ent = base["entity_id"].to_numpy()
+        self.same_prev = np.r_[False, ent[1:] == ent[:-1]]
+        self.contig = base["contig"].to_numpy() & self.same_prev
+        del ent
+        d = base["as_of"]
+        self.udates = np.sort(d.unique().to_numpy())
+        self.date_rank = (np.searchsorted(self.udates, d.to_numpy()) + 1).astype(np.int32)
+        self.tier = base["vol_tier"].to_numpy()
+        self.cost = cost_of(base["raw_close"].to_numpy())
+        self.ent_codes = base["entity_id"].cast(pl.Categorical).to_physical().to_numpy()
+        del base
+        self.win = window
+        self.win_lo = _first_rank(self.udates, window[0])
+        self.win_hi = int(np.searchsorted(self.udates, np.datetime64(window[1]), side="right"))
+        self.test_lo = _first_rank(self.udates, test_start) if test_start else None
         self.block = np.zeros(self.n, dtype=np.int8)
         for i, (_, a, b) in enumerate(BLOCKS):
-            self.block[((d >= a) & (d <= b)).to_numpy()] = i
-        self.tier = df["vol_tier"].to_numpy()
-        self.cost = cost_of(df["raw_close"].to_numpy())
-        self.feat = {c: df[c].to_numpy().astype(np.float32) for c in FEATURES if c in df.columns}
+            self.block[
+                (self.date_rank >= _first_rank(self.udates, a))
+                & (
+                    self.date_rank
+                    <= int(np.searchsorted(self.udates, np.datetime64(b), side="right"))
+                )
+            ] = i
+        self.start_rank: dict[str, int] = {}
+        for c, s in (starts or {}).items():
+            if s is not None:
+                self.start_rank[c] = _first_rank(self.udates, s)
+        # ---- yes/no conditions
+        cols = scan.collect_schema().names()
+        self.c_cols = [c for c in cols if c.startswith("c_")]
+        self.packed: dict[str, np.ndarray] = {}
+        self.packed_prev: dict[str, np.ndarray] = {}
+        for c in self.c_cols:
+            a = scan.select(c, "p_" + c[2:]).collect()
+            self.packed[c] = np.packbits(a[c].fill_null(False).to_numpy())
+            self.packed_prev[c] = np.packbits(a["p_" + c[2:]].fill_null(False).to_numpy())
+        log(f"    はい・いいえの条件 {len(self.c_cols)} 種類を読み込み")
+        # ---- numeric stock features -> bins (cut points from rows up to CUT_END, all eligible rows)
+        self.f_cols = [c for c in cols if c.startswith("f_")]
+        self.cuts: dict[str, dict[str, float]] = {}
+        self.feat: dict[str, np.ndarray] = {}
+        cut_rank = int(np.searchsorted(self.udates, np.datetime64(CUT_END), side="right"))
+        for c in self.f_cols:
+            v = scan.select(c).collect()[c].to_numpy().astype(np.float32)
+            ok = np.isfinite(v)
+            ref = v[ok & (self.date_rank <= cut_rank)]
+            if len(ref) < 1000:
+                continue
+            qs = {k: float(np.quantile(ref, q)) for k, q in F_BINS.items()}
+            self.cuts[c] = qs
+            for k, q in qs.items():
+                m = ok & ((v <= q) if k.startswith("lo") else (v >= q))
+                self.packed[f"{c}__{k}"] = np.packbits(m)
+            first = int(self.date_rank[ok].min()) if ok.any() else 0
+            for k in F_BINS:
+                self.start_rank[f"{c}__{k}"] = max(self.start_rank.get(f"{c}__{k}", 0), first)
+            if c in FEATURES:
+                self.feat[c] = v
+        self.fbin_cols = [k for k in self.packed if "__" in k]
+        log(f"    銘柄の数値 {len(self.cuts)} 項目 → 条件 {len(self.fbin_cols)} 種類")
+        # ---- market-wide (per session) features -> bins, stored per date
+        day = day.filter(
+            pl.col("as_of").is_in(pl.Series(self.udates).cast(pl.Date).implode())
+        ).sort("as_of")
+        drank = np.searchsorted(self.udates, day["as_of"].to_numpy()) + 1
+        self.day_cond: dict[str, np.ndarray] = {}
+        dref = day["as_of"].to_numpy() <= np.datetime64(CUT_END)
+        for c in [x for x in day.columns if x.startswith("m_")]:
+            v = day[c].to_numpy().astype(np.float64)
+            ok = np.isfinite(v)
+            if (ok & dref).sum() < 250:
+                continue
+            first = int(drank[ok].min())
+            bins = {
+                k: (v <= np.quantile(v[ok & dref], q))
+                if k.startswith("lo")
+                else (v >= np.quantile(v[ok & dref], q))
+                for k, q in M_BINS.items()
+            }
+            self.cuts[c] = {k: float(np.quantile(v[ok & dref], q)) for k, q in M_BINS.items()}
+            if "_chg" in c or "_ret" in c or c.startswith("m_rs_"):
+                bins |= {"up": v > 0, "dn": v < 0}
+            for k, b in bins.items():
+                arr = np.zeros(len(self.udates) + 2, dtype=bool)
+                arr[drank] = b & ok
+                self.day_cond[f"{c}__{k}"] = arr
+                self.start_rank[f"{c}__{k}"] = first
+        self.mbin_cols = list(self.day_cond)
+        log(f"    市場全体の条件 {len(self.mbin_cols)} 種類")
+        # ---- outcomes
+        hz = horizons or HORIZONS
+        self.horizons = hz
         xk = "xsp" if universe == "sp500" else "xret"
         self.m: dict[str, np.ndarray] = {}
-        for h in HORIZONS:
-            for k in ("ret", "mfe", "mae"):
-                self.m[f"{k}_{h}"] = df[f"{k}_{h}"].to_numpy().astype(np.float32)
-            self.m[f"xret_{h}"] = df[f"{xk}_{h}"].to_numpy().astype(np.float32)
+        for h in hz:
+            a = scan.select(f"ret_{h}", f"{xk}_{h}", f"mfe_{h}", f"mae_{h}").collect()
+            self.m[f"ret_{h}"] = a[f"ret_{h}"].to_numpy().astype(np.float32)
+            self.m[f"xret_{h}"] = a[f"{xk}_{h}"].to_numpy().astype(np.float32)
+            self.m[f"mfe_{h}"] = a[f"mfe_{h}"].to_numpy().astype(np.float16)
+            self.m[f"mae_{h}"] = a[f"mae_{h}"].to_numpy().astype(np.float16)
+        self.rh = [h for h in features.R_HORIZONS if h in hz]
+        self.r: dict[str, np.ndarray] = {}
+        for s in features.STOPS:
+            rp = scan.select(f"rp_{s}").collect()[f"rp_{s}"].to_numpy().astype(np.float32)
+            self.r[f"costR_{s}"] = (self.cost / np.where(rp > 0, rp, np.nan)).astype(np.float16)
+            for h in self.rh:
+                a = scan.select(f"r_{s}_{h}_fin", f"r_{s}_{h}_mfe").collect()
+                self.r[f"{s}_{h}_fin"] = a[f"r_{s}_{h}_fin"].to_numpy().astype(np.float16)
+                self.r[f"{s}_{h}_mfe"] = a[f"r_{s}_{h}_mfe"].to_numpy().astype(np.float16)
+        log(f"    結果の列を読み込み（{self.n:,} 行）")
 
     # ---- condition masks
+    def all_conditions(self) -> list[str]:
+        return self.c_cols + self.fbin_cols + self.mbin_cols
+
     def _cond(self, name: str) -> np.ndarray:
         neg = name.startswith("!")
-        v = np.unpackbits(self.packed[name.lstrip("!")], count=self.n).view(bool)
+        key = name.lstrip("!")
+        if key in self.day_cond:
+            v = self.day_cond[key][self.date_rank]
+        else:
+            v = np.unpackbits(self.packed[key], count=self.n).view(bool)
         return ~v if neg else v
 
     def _prev(self, name: str) -> np.ndarray:
-        return np.unpackbits(self.packed_prev[name], count=self.n).view(bool)
+        """Previous-session state. Unknown previous session (not contiguous) counts as 'true' -> no onset."""
+        if name in self.packed_prev:
+            return np.unpackbits(self.packed_prev[name], count=self.n).view(bool)
+        if name in self.day_cond:
+            return self.day_cond[name][self.date_rank - 1]
+        cur = np.unpackbits(self.packed[name], count=self.n).view(bool)
+        return np.where(self.contig, np.r_[False, cur[:-1]], True)
 
     def start_of(self, conds: tuple[str, ...]) -> int:
         return max((self.start_rank.get(c.lstrip("!"), 0) for c in conds), default=0)
 
     def state(self, conds: tuple[str, ...]) -> np.ndarray:
-        cur = self._cond(conds[0])
+        cur = self._cond(conds[0]).copy()
         for c in conds[1:]:
             cur &= self._cond(c)
         return cur
 
     def prev_state(self, conds: tuple[str, ...]) -> np.ndarray:
-        """Previous-session state of the positive conditions only."""
         pos = [c for c in conds if not c.startswith("!")]
-        prv = self._prev(pos[0])
+        prv = self._prev(pos[0]).copy()
         for c in pos[1:]:
             prv &= self._prev(c)
         return prv
@@ -187,115 +260,153 @@ class Study:
         return ev
 
     def events(self, conds: tuple[str, ...]) -> np.ndarray:
-        """Onset days of the positive conditions, with the NOT conditions holding that day; data-covered rows only."""
         if not any(not c.startswith("!") for c in conds):
             return np.zeros(self.n, dtype=bool)
         return self.onset(self.state(conds), self.prev_state(conds), self.start_of(conds))
 
     # ---- statistics
     def stats(self, idx: np.ndarray, h: int) -> dict[str, Any]:
-        """idx: index array of event rows."""
-        r, x, mf, ma = (self.m[f"{k}_{h}"][idx] for k in ("ret", "xret", "mfe", "mae"))
+        r, x = self.m[f"ret_{h}"][idx], self.m[f"xret_{h}"][idx]
         ok = np.isfinite(r) & np.isfinite(x)
-        r, x, mf, ma = r[ok], x[ok], mf[ok], ma[ok]
-        cost, rk = self.cost[idx][ok], self.date_rank[idx][ok]
-        n = len(r)
-        if n == 0:
+        r, x = r[ok], x[ok]
+        if len(r) == 0:
             return {"n": 0}
+        mf = self.m[f"mfe_{h}"][idx][ok].astype(np.float32)
+        ma = self.m[f"mae_{h}"][idx][ok].astype(np.float32)
+        cost, rk = self.cost[idx][ok], self.date_rank[idx][ok]
         net = r - cost
+        n = len(r)
         k10 = max(1, n // 10)
         top = -np.partition(-net, k10 - 1)[:k10] if n > k10 else net
         return {
             "n": n, "mean": float(r.mean()), "net": float(net.mean()), "median": float(np.median(r)), "win": float((net > 0).mean()),
-            "xmean": float(x.mean()), "xt": _clustered_t(x, rk),
-            "p10": float(np.quantile(r, 0.1)), "p90": float(np.quantile(r, 0.9)), "top10_mean": float(top.mean()),
-            "mfe_med": float(np.median(mf)), "mfe_p75": float(np.quantile(mf, 0.75)), "mae_med": float(np.median(ma)), "mae_p25": float(np.quantile(ma, 0.25)),
-            "hit20": float((mf >= 0.2).mean()), "hit50": float((mf >= 0.5).mean()), "hit100": float((mf >= 1.0).mean()),
+            "xmean": float(x.mean()), "xt": _clustered_t(x, rk), "p10": float(np.quantile(r, 0.1)), "p90": float(np.quantile(r, 0.9)),
+            "top10_mean": float(top.mean()), "mfe_med": float(np.median(mf)), "mae_med": float(np.median(ma)),
+            "hit20": float((mf >= 0.2).mean()), "hit50": float((mf >= 0.5).mean()),
         }  # fmt: skip
 
-    def dev_mask_h(self, h: int) -> np.ndarray:
-        """Development rows whose h-session outcome ends inside the development period."""
-        return self.date_rank <= self.dev_rank - h
+    def rstats(self, idx: np.ndarray, stop: str, h: int) -> dict[str, Any]:
+        """R outcome with the given stop (after costs in R)."""
+        fin = self.r[f"{stop}_{h}_fin"][idx].astype(np.float32)
+        ok = np.isfinite(fin)
+        if not ok.any():
+            return {"n": 0}
+        fin = fin[ok] - np.nan_to_num(self.r[f"costR_{stop}"][idx][ok].astype(np.float32), nan=0.0)
+        mfe = self.r[f"{stop}_{h}_mfe"][idx][ok].astype(np.float32)
+        n = len(fin)
+        k10 = max(1, n // 10)
+        top = -np.partition(-fin, k10 - 1)[:k10] if n > k10 else fin
+        return {"n": n, "exp": float(fin.mean()), "median": float(np.median(fin)), "win": float((fin > 0).mean()),
+                "stopped": float((fin <= -0.99).mean()), "top10": float(top.mean()), "t": _clustered_t(fin, self.date_rank[idx][ok]),
+                **{f"hit{k}": float((mfe >= k).mean()) for k in (2, 3, 5, 10)}}  # fmt: skip
+
+    def search_mask_h(self, h: int) -> tuple[int, int]:
+        """Rank range of the search window whose h-session outcome also ends inside the window."""
+        return self.win_lo, self.win_hi - h
 
     def quick(self, ev: np.ndarray, h: int) -> tuple[int, float, float]:
-        """(n, mean excess return, day-clustered t) for the search; development period only."""
+        """(n, mean excess return, day-clustered t) in the search window."""
         idx = np.flatnonzero(ev)
-        idx = idx[self.date_rank[idx] <= self.dev_rank - h]
+        lo, hi = self.search_mask_h(h)
+        rk = self.date_rank[idx]
+        idx = idx[(rk >= lo) & (rk <= hi)]
         x = self.m[f"xret_{h}"][idx]
         ok = np.isfinite(x)
         x, rk = x[ok], self.date_rank[idx][ok]
-        n = len(x)
-        if n < 2:
-            return n, 0.0, 0.0
-        return n, float(x.mean()), _clustered_t(x, rk)
+        if len(x) < 2:
+            return len(x), 0.0, 0.0
+        return len(x), float(x.mean()), _clustered_t(x, rk)
 
-    def profile(self, conds: tuple[str, ...], horizons: list[int] | None = None) -> dict[str, Any]:
-        """Full breakdown for one condition set: horizons x (all, dev/test, blocks, recent3, recent1, vol tiers, ex-top5-days)."""
+    def profile(
+        self, conds: tuple[str, ...], horizons: list[int] | None = None, full: bool = True
+    ) -> dict[str, Any]:
         ev = self.events(conds)
         out: dict[str, Any] = {"conds": list(conds), "events": int(ev.sum())}
-        st = self.start_of(conds)
-        out["data_from_rank"] = st
         if ev.sum() == 0:
             return out
-        idx = np.flatnonzero(ev)  # work on event rows only (much faster than full-length masks)
+        idx = np.flatnonzero(ev)
         dr = self.date_rank[idx]
         days, counts = np.unique(dr, return_counts=True)
         out["top5_share"] = float(np.sort(counts)[-5:].sum() / counts.sum())
         out["days"] = int(len(days))
         top5 = days[np.argsort(counts)[-5:]]
-        blk, tier = self.block[idx], self.tier[idx]
-        slices = {"all": idx, "test": idx[dr > self.dev_rank], "recent3": idx[self.recent3[idx]],
-                  "recent1": idx[self.recent1[idx]], "ex_top5": idx[~np.isin(dr, top5)]}  # fmt: skip
-        for i, (name, _, _) in enumerate(BLOCKS):
-            slices[name] = idx[blk == i]
-        for t in (1, 2, 3, 4):
-            slices[f"vol{t}"] = idx[tier == t]
-        for h in horizons or HORIZONS:
-            s = {"dev": self.stats(idx[dr <= self.dev_rank - h], h)}
-            s |= {k: self.stats(m, h) for k, m in slices.items()}
-            s["grade"] = grade(s)
+        ex5 = ~np.isin(dr, top5)
+        test = (dr >= self.test_lo) if self.test_lo else np.zeros(len(idx), bool)
+        last = int(self.date_rank.max())
+        recent1 = dr > last - 252
+        for h in horizons or self.horizons:
+            lo, hi = self.search_mask_h(h)
+            win = (dr >= lo) & (dr <= hi)
+            sl = {
+                "search": idx[win],
+                "test": idx[test],
+                "recent1": idx[recent1],
+                "ex_top5": idx[ex5 & (win | test)],
+                "all": idx,
+            }
+            if full:
+                sl |= {name: idx[self.block[idx] == i] for i, (name, _, _) in enumerate(BLOCKS)}
+                sl |= {f"vol{t}": idx[(self.tier[idx] == t) & (win | test)] for t in (1, 2, 3, 4)}
+            s: dict[str, Any] = {k: self.stats(v, h) for k, v in sl.items()}
+            if h in self.rh:
+                # pick the stop with the best expectancy in the search window, then report it everywhere
+                cand = {st: self.rstats(sl["search"], st, h) for st in features.STOPS}
+                ok = {k: v for k, v in cand.items() if v.get("n", 0) >= MIN_DEV}
+                best = max(ok, key=lambda k: ok[k]["exp"]) if ok else None
+                s["R_by_stop"] = {
+                    k: {"exp": v.get("exp"), "n": v.get("n", 0)} for k, v in cand.items()
+                }
+                if best:
+                    rs = {
+                        k: self.rstats(sl[k], best, h)
+                        for k in ("search", "test", "recent1", "ex_top5", "all")
+                    }
+                    if full:
+                        rs |= {name: self.rstats(sl[name], best, h) for name, _, _ in BLOCKS}
+                    s["R"] = {"stop": best, **rs}
+            s["grade"] = grade(s, self.test_lo is not None)
             out[str(h)] = s
         return out
 
 
-GRADES = ["有力", "最近有効", "候補", "参考", "不採用"]
+GRADES = ["主力候補（長寿命）", "主力候補（新しい傾向）", "観察", "参考", "不採用"]
 
 
-def grade(s: dict[str, Any]) -> str:
-    """VALIDATION_PLAN §5 (net = after-cost mean; 'better than the universe' = mean excess > 0).
+def grade(s: dict[str, Any], has_test: bool = True) -> str:
+    """VALIDATION_PLAN §5-3. Uses the R expectancy of the best stop (chosen in the search window) when
+    available, otherwise the after-cost mean return; 'better than the universe' = mean excess return > 0."""
+    R = s.get("R")
 
-    Blocks count only with MIN_SLICE+ events. "有力" needs a positive net mean in at least 3 of 4 blocks;
-    when a condition's data covers fewer blocks, in at least 3/4 of the blocks it covers (min. 2).
-    Fewer than MIN_DEV development events -> "参考" (shown separately, VALIDATION_PLAN §2).
-    """
+    def val(k: str) -> tuple[int, float]:
+        if R and R.get(k, {}).get("n", 0):
+            return R[k]["n"], R[k]["exp"]
+        v = s.get(k, {})
+        return v.get("n", 0), v.get("net", 0.0)
 
-    def has(k: str) -> bool:
-        return s.get(k, {}).get("n", 0) >= MIN_SLICE
-
-    def pos(k: str) -> bool:
-        return has(k) and s[k]["net"] > 0
-
-    if s.get("dev", {}).get("n", 0) < MIN_DEV:
+    n_s, e_s = val("search")
+    if n_s < MIN_DEV:
         return "参考"
-    avail = sum(has(b[0]) for b in BLOCKS)
-    need = max(2, math.ceil(0.75 * avail))
-    blocks = sum(pos(b[0]) for b in BLOCKS)
-    if avail >= 2 and blocks >= need and pos("recent3") and s["all"].get("xmean", -1) > 0:
-        return "有力"
-    if pos("recent3") and pos("recent1"):
-        return "最近有効"
-    if pos("all"):
-        return "候補"
-    return "不採用"
+    strong = e_s > 0 and s["search"].get("xmean", -1) > 0
+    if not strong:
+        return "不採用"
+    n_x, e_x = val("ex_top5")
+    if not has_test:
+        return "観察" if (n_x >= MIN_SLICE and e_x > 0) else "不採用"
+    n_t, e_t = val("test")
+    if n_t < MIN_SLICE or e_t <= 0 or e_x <= 0:
+        return "観察"
+    old = [val(b[0]) for b in BLOCKS[:3]]
+    old = [e for n, e in old if n >= MIN_SLICE]
+    return (
+        "主力候補（長寿命）"
+        if old and sum(e > 0 for e in old) * 2 > len(old)
+        else "主力候補（新しい傾向）"
+    )
 
 
-def stepwise(study: Study, seeds: list[str], extras: list[str], h: int, beam: int = 40, max_depth: int = 8,
-             min_gain: float = 0.002, min_t: float = 2.0) -> tuple[list[dict[str, Any]], int]:  # fmt: skip
-    """Beam search: add one condition at a time, keep the best by development-period mean excess return.
-
-    A child is kept only if it beats its parent by `min_gain` and stays at MIN_DEV+ events.
-    Returns (every set with n >= MIN_DEV and day-clustered t >= min_t, number of sets evaluated).
-    """
+def stepwise(study: Study, seeds: list[str], extras: list[str], h: int, beam: int = 25, max_depth: int = 6,
+             min_gain: float = 0.002, min_t: float = 2.0, log: Any = None) -> tuple[list[dict[str, Any]], int]:  # fmt: skip
+    """Beam search: add one condition at a time, keep the best by mean excess return in the search window."""
     pool = seeds + extras
     found: dict[tuple[str, ...], dict[str, Any]] = {}
     level: list[tuple[tuple[str, ...], float]] = []
@@ -303,16 +414,17 @@ def stepwise(study: Study, seeds: list[str], extras: list[str], h: int, beam: in
         n, mu, t = study.quick(study.events((c,)), h)
         if n >= MIN_DEV:
             if t >= min_t:
-                found[(c,)] = {"conds": (c,), "n_dev": n, "x_dev": mu, "t_dev": t}
+                found[(c,)] = {"conds": (c,), "n": n, "x": mu, "t": t}
             level.append(((c,), mu))
     tried = len(seeds)
     level = sorted(level, key=lambda z: -z[1])[:beam]
-    for _ in range(max_depth - 1):
+    for depth in range(max_depth - 1):
         nxt: dict[tuple[str, ...], float] = {}
         for conds, parent_mu in level:
             cur_p, prv_p, st_p = study.state(conds), study.prev_state(conds), study.start_of(conds)
+            used = {c.split("__")[0] for c in conds}
             for c in pool:
-                if c in conds:
+                if c in conds or c.split("__")[0] in used:  # one bin per feature
                     continue
                 key = tuple(sorted(conds + (c,)))
                 if key in nxt or key in found:
@@ -328,20 +440,32 @@ def stepwise(study: Study, seeds: list[str], extras: list[str], h: int, beam: in
                     continue
                 nxt[key] = mu
                 if t >= min_t:
-                    found[key] = {"conds": key, "n_dev": n, "x_dev": mu, "t_dev": t}
+                    found[key] = {"conds": key, "n": n, "x": mu, "t": t}
+        if log:
+            log(f"      段階{depth + 2}：候補 {len(nxt)}・試した数 {tried:,}")
         if not nxt:
             break
         level = sorted(nxt.items(), key=lambda z: -z[1])[:beam]
-    return sorted(found.values(), key=lambda r: -r["x_dev"]), tried
+    return sorted(found.values(), key=lambda r: -r["x"]), tried
+
+
+def regimes(study: Study, conds: tuple[str, ...], h: int, keys: list[str]) -> dict[str, Any]:
+    """Same pattern split by market regimes (e.g. oil high / low): R or return in each state, search+test windows."""
+    ev = study.events(conds)
+    idx = np.flatnonzero(ev)
+    out: dict[str, Any] = {}
+    for k in keys:
+        if k not in study.day_cond:
+            continue
+        m = study.day_cond[k][study.date_rank[idx]]
+        out[k] = {"in": study.stats(idx[m], h), "out": study.stats(idx[~m], h)}
+    return out
 
 
 def strong_days(
     study: Study, conds: tuple[str, ...], h: int = 20, n_days: int = 5
 ) -> dict[str, Any]:
-    """VALIDATION_PLAN §3 'strong days': on the days this signal fired most, which stock traits did best.
-
-    For each feature, events on those days are split into quartiles and the mean excess return per quartile is given.
-    """
+    """On the days this signal fired most, which stock traits did best (quartiles of a few features)."""
     ev = study.events(conds)
     if ev.sum() == 0:
         return {}
@@ -362,6 +486,23 @@ def strong_days(
             continue
         q = np.quantile(fv[ok], [0.25, 0.5, 0.75])
         b = np.digitize(fv[ok], q)
-        out["by"][f] = [{"q": i + 1, "n": int((b == i).sum()), "xmean": float(x[ok][b == i].mean()),
-                         "lo": float(fv[ok][b == i].min()), "hi": float(fv[ok][b == i].max())} for i in range(4) if (b == i).any()]  # fmt: skip
+        out["by"][f] = [
+            {"q": i + 1, "n": int((b == i).sum()), "xmean": float(x[ok][b == i].mean())}
+            for i in range(4)
+            if (b == i).any()
+        ]
     return out
+
+
+def bin_label(name: str, labels: dict[str, str], cuts: dict[str, dict[str, float]]) -> str:
+    """Japanese label of a condition name like 'f_dev_ma20__hi10' or '!c_x'."""
+    neg = name.startswith("!")
+    key = name.lstrip("!")
+    if "__" in key:
+        base, b = key.split("__", 1)
+        cut = cuts.get(base, {}).get(b)
+        cut_s = f"（{'≦' if b.startswith('lo') else '≧'}{cut:.4g}）" if cut is not None else ""
+        s = f"{labels.get(base, base)}が{BIN_LABELS.get(b, b)}{cut_s}"
+    else:
+        s = labels.get(key, key)
+    return f"「{s}」ではない" if neg else s

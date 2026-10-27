@@ -246,7 +246,7 @@ def insiders(storage: Any, base: pl.DataFrame) -> pl.DataFrame:
         (C("ins_value30") >= 100_000).fill_null(False).alias("c_ins_buy"),
         (C("ins_buyers30") >= 2).fill_null(False).alias("c_ins_cluster"),
         C("ins_cc30").fill_null(False).alias("c_ins_ceo"),
-    ).drop("ins_value30", "ins_buyers30", "ins_cc30")
+    ).drop("ins_buyers30", "ins_cc30")
 
 
 # ---------------------------------------------------------------- shares outstanding -> market cap, dilution
