@@ -200,17 +200,26 @@ def test_split_factor_restores_price_of_the_day() -> None:
 
 
 def test_grade_rules() -> None:
-    def s(v: float, n: int = 50) -> dict:
-        return {"n": n, "net": v, "xmean": v}
+    def s(v: float, n: int = 50, t: float = 3.0) -> dict:
+        return {"n": n, "net": v, "xmean": v, "xt": t}
 
     blocks_up = {b[0]: s(0.01) for b in events.BLOCKS}
-    base = {"search": s(0.01), "test": s(0.01), "ex_top5": s(0.01)}
+    base = {"search": s(0.01), "test": s(0.01), "ex_top5": s(0.01), "top5_share": 0.2}
     assert events.grade(base | blocks_up) == "主力候補（長寿命）"
     blocks_new = blocks_up | {"2010-13": s(-0.01), "2014-17": s(-0.01), "2018-21": s(-0.01)}
     assert events.grade(base | blocks_new) == "主力候補（新しい傾向）"
+    # confirmation period negative, too small or not reliable -> observe
     assert events.grade(base | blocks_up | {"test": s(-0.01)}) == "観察"
+    assert events.grade(base | blocks_up | {"test": s(0.01, n=15)}) == "観察"
+    assert events.grade(base | blocks_up | {"test": s(0.01, t=1.0)}) == "観察"
+    # concentrated on a few days -> not a main candidate
+    assert events.grade(base | blocks_up | {"top5_share": 0.8}) == "観察"
+    # weak in the search window
     assert events.grade(base | blocks_up | {"search": s(-0.01)}) == "不採用"
     assert events.grade(base | blocks_up | {"search": s(0.01, n=10)}) == "参考"
+    # market-wide conditions: excess return is ~0 by construction and is not required
+    mk = base | blocks_up | {"search": {"n": 50, "net": 0.01, "xmean": 0.0, "xt": 3.0}, "market_wide": True}
+    assert events.grade(mk) == "主力候補（長寿命）"
     # 2025-only search: no confirmation period -> at most "observe"
     assert events.grade(base, has_test=False) == "観察"
 
