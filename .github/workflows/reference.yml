@@ -1,4 +1,4 @@
-# Reference data for validation: S&P 500 membership, fails-to-deliver, insider trades, shares outstanding.
+# Reference data for validation: S&P 500 membership, FTD, insider trades, shares, margin, CFTC, put/call, SIC.
 name: reference
 on:
   schedule:
@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       sources:
-        description: "sp500,ftd,insider,shares"
+        description: "sp500,ftd,insider,shares,margin,cftc,pcr,sic"
         required: false
-        default: "sp500,ftd,insider,shares"
+        default: "sp500,ftd,insider,shares,margin,cftc,pcr"
       backfill:
         description: "fetch full history (true/false)"
         required: false
@@ -40,7 +40,7 @@ jobs:
           IN_SOURCES: ${{ inputs.sources }}
           IN_BACKFILL: ${{ inputs.backfill }}
         run: |
-          ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares}"
+          ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares,margin,cftc,pcr}"
           [ "$IN_BACKFILL" = "true" ] && ARGS="$ARGS --backfill"
           echo "args: $ARGS"
           uv run python -m jobs.reference_data $ARGS

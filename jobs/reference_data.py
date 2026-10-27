@@ -1,6 +1,7 @@
-"""Reference data for validation: S&P 500 membership, fails-to-deliver, insider trades, shares outstanding.
+"""Reference data for validation: S&P 500 membership, fails-to-deliver, insider trades, shares outstanding,
+FINRA margin statistics, CFTC positioning, Cboe put/call ratios, SEC company profiles (SIC).
 
-Usage: python -m jobs.reference_data [--sources sp500,ftd,insider,shares] [--backfill]
+Usage: python -m jobs.reference_data [--sources sp500,ftd,insider,shares,margin,cftc,pcr,sic] [--backfill]
 Normal mode fetches only files not yet stored (plus the latest few); --backfill fetches all history.
 """
 
@@ -18,6 +19,7 @@ from mw.core.http import HttpClient
 from mw.core.logging import job_run, setup_logging
 from mw.core.storage import GuardedStorage, open_storage
 from mw.ingest.base import raw_key, write_raw_bytes
+from mw.ingest.us import market_extra as X
 from mw.ingest.us import sec_filings
 from mw.ingest.us import sec_reference as R
 from mw.universe import sp500
@@ -158,14 +160,154 @@ def run_shares(
     return {"quarters": len(done), "errors": errors}
 
 
+def _store(storage: GuardedStorage, source: str, name: str, data: bytes, now: datetime) -> str:
+    rk = raw_key(source, now, f"{name}_{now:%H%M%S}")
+    return f"{rk}#sha256={write_raw_bytes(storage, rk, data)}"
+
+
+def run_margin(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    url = X.finra_link(http.get(X.FINRA_PAGE).text)
+    data = http.get(url).content
+    ref = _store(storage, "finra_margin", "margin-statistics.xlsx", data, now)
+    df = X.parse_margin(data).with_columns(pl.lit("MACRO:FINRA:MARGIN").alias("entity_id"))
+    storage.write_parquet(
+        "silver/finra_margin/market=US/latest.parquet", _pit(df, "finra_margin", ref, now)
+    )
+    return {"months": df.height, "first": str(df["as_of"].min()), "last": str(df["as_of"].max())}
+
+
+def run_cftc(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dict[str, Any]:
+    today = datetime.now(UTC).date()
+    years = range(2010, today.year + 1) if backfill else [today.year]
+    done, errors = [], {}
+    for y in years:
+        try:
+            now = datetime.now(UTC)
+            frames = []
+            for kind, url, markets, groups in (("tff", X.CFTC_TFF, X.TFF_MARKETS, X.TFF_GROUPS),
+                                               ("disagg", X.CFTC_DIS, X.DIS_MARKETS, X.DIS_GROUPS)):  # fmt: skip
+                data = http.get(url.format(y=y)).content
+                ref = _store(storage, "cftc_cot", f"{kind}_{y}.zip", data, now)
+                frames.append(_pit(X.parse_cot(data, markets, groups), "cftc_cot", ref, now))
+            df = pl.concat(frames, how="diagonal_relaxed").with_columns(
+                (pl.lit("MACRO:CFTC:") + pl.col("market")).alias("entity_id")
+            )
+            storage.write_parquet(f"silver/cftc_cot/market=GLOBAL/year={y}.parquet", df)
+            done.append(y)
+        except Exception as e:
+            errors[str(y)] = f"{type(e).__name__}: {e}"[:160]
+    if errors:
+        raise RuntimeError(f"cftc errors={errors}")
+    return {"years": done}
+
+
+def run_pcr(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dict[str, Any]:
+    """Cboe put/call ratios: archived CSVs to 2019-10, then one JSON per session (yearly files)."""
+    today = datetime.now(UTC).date()
+    now = datetime.now(UTC)
+    if backfill:
+        frames = []
+        for kind, name in (("total", "pc_total"), ("equity", "pc_equity"), ("index", "pc_index")):
+            data = http.get(X.CBOE_CSV.format(kind=kind)).content
+            _store(storage, "cboe_pcr", f"{kind}pc.csv", data, now)
+            frames.append(X.parse_cboe_csv(data, name))
+        old = (
+            frames[0]
+            .join(frames[1], on="as_of", how="full", coalesce=True)
+            .join(frames[2], on="as_of", how="full", coalesce=True)
+        )
+        old = old.filter(pl.col("as_of") <= X.CBOE_CSV_END)
+        for y in old["as_of"].dt.year().unique().to_list():
+            part = old.filter(pl.col("as_of").dt.year() == y)
+            _write_pcr(storage, y, part, "archive csv", now)
+        start = X.CBOE_CSV_END + timedelta(days=1)
+    else:
+        start = today - timedelta(days=14)
+    rows, missing = [], 0
+    d = start
+    while d <= today:
+        if d.weekday() < 5:
+            r = http.get(X.CBOE_DAILY.format(d=d.isoformat()))
+            if r.status_code == 200:
+                rows.append(X.parse_cboe_daily(r.content, d))
+            else:
+                missing += 1  # holidays / not yet published
+        d += timedelta(days=1)
+    if rows:
+        new = pl.DataFrame(rows).with_columns(pl.col("as_of").cast(pl.Date))
+        for y in new["as_of"].dt.year().unique().to_list():
+            _write_pcr(storage, y, new.filter(pl.col("as_of").dt.year() == y), "daily json", now)
+    return {"daily_rows": len(rows), "missing_days": missing, "from": str(start)}
+
+
+def _write_pcr(
+    storage: GuardedStorage, y: int, part: pl.DataFrame, ref: str, now: datetime
+) -> None:
+    key = f"silver/cboe_pcr/market=US/year={y}.parquet"
+    part = _pit(
+        part.with_columns(
+            X.cboe_published_at(pl.col("as_of")).alias("published_at"),
+            pl.lit("MACRO:CBOE:PCR").alias("entity_id"),
+        ),
+        "cboe_pcr",
+        ref,
+        now,
+    )
+    if storage.exists(key):
+        old = storage.read_parquet(key)
+        part = pl.concat(
+            [old.filter(~pl.col("as_of").is_in(part["as_of"].implode())), part],
+            how="diagonal_relaxed",
+        )
+    storage.write_parquet(key, part.sort("as_of"))
+
+
+def run_sic(storage: GuardedStorage, backfill: bool) -> dict[str, Any]:
+    """Company profiles (SIC) from the stored raw submissions batches; latest profile per CIK wins."""
+    now = datetime.now(UTC)
+    keys = sorted(k for k in storage.list("raw/sec_filings/") if "submissions" in k)
+    prof: dict[int, dict[str, Any]] = {}
+    for k in keys:
+        for r in X.parse_profiles(storage.get_bytes(k)):
+            prof[int(r["cik"])] = r  # type: ignore[call-overload]
+    df = pl.DataFrame(
+        list(prof.values()),
+        schema={
+            "cik": pl.Int64,
+            "name": pl.String,
+            "sic": pl.String,
+            "sic_desc": pl.String,
+            "tickers": pl.List(pl.String),
+        },
+    )
+    df = (
+        df.explode("tickers")
+        .with_columns(
+            pl.when(pl.col("tickers").is_not_null())
+            .then(pl.lit("US:") + pl.col("tickers").str.replace_all("-", "."))
+            .alias("entity_id")
+        )
+        .rename({"tickers": "ticker"})
+    )
+    df = _pit(df, "sec_company", f"{len(keys)} raw submissions batches", now)
+    storage.write_parquet("silver/sec_company/market=US/latest.parquet", df)
+    return {
+        "companies": len(prof),
+        "rows": df.height,
+        "with_sic": int(df["sic"].is_not_null().sum()),
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--sources", default="sp500,ftd,insider,shares")
+    p.add_argument("--sources", default="sp500,ftd,insider,shares,margin,cftc,pcr")
     p.add_argument("--backfill", action="store_true")
     args = p.parse_args()
     setup_logging()
     storage = open_storage(load_settings().storage)
     wiki = HttpClient(rate_per_host=0.5, user_agent=WIKI_UA)
+    web = HttpClient(rate_per_host=2.0, user_agent="Mozilla/5.0 (MarketWeather personal research)")
     failed = False
     holder: dict[str, Any] = {}
 
@@ -180,6 +322,10 @@ def main() -> int:
         "ftd": lambda: run_ftd(storage, sec(), args.backfill),
         "insider": lambda: run_insider(storage, sec(), args.backfill),
         "shares": lambda: run_shares(storage, sec(), args.backfill),
+        "margin": lambda: run_margin(storage, web, args.backfill),
+        "cftc": lambda: run_cftc(storage, web, args.backfill),
+        "pcr": lambda: run_pcr(storage, web, args.backfill),
+        "sic": lambda: run_sic(storage, args.backfill),
     }
     for name in args.sources.split(","):
         try:
@@ -188,6 +334,7 @@ def main() -> int:
         except Exception:
             failed = True
     wiki.close()
+    web.close()
     return 1 if failed else 0
 
 
