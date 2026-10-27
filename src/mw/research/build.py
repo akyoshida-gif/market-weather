@@ -26,19 +26,10 @@ PRICE_COLS = ["entity_id", "as_of", "open", "high", "low", "close", "volume", "s
 JUMP = 0.6  # one-day move treated as a data error (VALIDATION_PLAN §1)
 
 
-def fred_known(fred: pl.DataFrame) -> pl.DataFrame:
-    """Shift published_at so that its New York date is the first session the value can be used.
-
-    +8h maps 16:00 NY (the close) to 00:00 of the next day; earlier times stay on the same date.
-    (regime.us_regime takes the NY date of published_at as the usable date.)
-    """
-    return fred.with_columns((C("published_at") + pl.duration(hours=8)).alias("published_at"))
-
-
 def market_conditions(
     prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame, etfs: set[str]
 ) -> pl.DataFrame:
-    fred = fred_known(fred)
+    # regime.us_regime applies the publication-time rule to FRED itself (ADR-0016)
     r = regime.us_regime(prices.select("entity_id", "as_of", "close"), vol, fred)
     br = (
         prices.filter(~C("entity_id").is_in(list(etfs)))
@@ -54,7 +45,7 @@ def market_conditions(
     r = r.join(br, on="as_of", how="left")
     # BAA corporate spread has full history (ICE HY on FRED keeps only 3 years)
     baa = fred.filter(C("entity_id") == "MACRO:FRED:BAA10Y").with_columns(
-        C("published_at").dt.convert_time_zone("America/New_York").dt.date().alias("known")
+        external.known_date(C("published_at"))
     )
     baa = (
         baa.group_by("known")
