@@ -178,28 +178,47 @@ def run_margin(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dic
 
 
 def run_cftc(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dict[str, Any]:
+    """CFTC positioning via the public reporting API, one request series per contract; stored by year."""
     today = datetime.now(UTC).date()
-    years = range(2010, today.year + 1) if backfill else [today.year]
-    done, errors = [], {}
-    for y in years:
-        try:
-            now = datetime.now(UTC)
-            frames = []
-            for kind, url, markets, groups in (("tff", X.CFTC_TFF, X.TFF_MARKETS, X.TFF_GROUPS),
-                                               ("disagg", X.CFTC_DIS, X.DIS_MARKETS, X.DIS_GROUPS)):  # fmt: skip
-                data = http.get(url.format(y=y)).content
-                ref = _store(storage, "cftc_cot", f"{kind}_{y}.zip", data, now)
-                frames.append(_pit(X.parse_cot(data, markets, groups), "cftc_cot", ref, now))
-            df = pl.concat(frames, how="diagonal_relaxed").with_columns(
-                (pl.lit("MACRO:CFTC:") + pl.col("market")).alias("entity_id")
+    since = date(2006, 1, 1) if backfill else today - timedelta(days=60)
+    now = datetime.now(UTC)
+    frames, raws = [], []
+    for kind, ds in X.COT_DATASETS.items():
+        for code in X.API_MARKETS[kind]:
+            offset = 0
+            while True:
+                r = http.get(
+                    X.COT_API.format(ds=ds), params=X.cot_api_params(kind, code, since, offset)
+                )
+                rows = r.json()
+                raws.append(r.content)
+                frames.append(X.parse_cot_api(rows, kind))
+                if len(rows) < 5000:
+                    break
+                offset += 5000
+    ref = _store(storage, "cftc_cot", "api.json", b"\n".join(raws), now)
+    df = _pit(pl.concat(frames, how="diagonal_relaxed"), "cftc_cot", ref, now).with_columns(
+        (pl.lit("MACRO:CFTC:") + pl.col("market")).alias("entity_id")
+    )
+    years = []
+    for y in sorted(df["as_of"].dt.year().unique().to_list()):
+        part = df.filter(pl.col("as_of").dt.year() == y)
+        key = f"silver/cftc_cot/market=GLOBAL/year={y}.parquet"
+        if storage.exists(key):
+            old = storage.read_parquet(key)
+            part = pl.concat(
+                [
+                    old.join(part.select("market", "as_of"), on=["market", "as_of"], how="anti"),
+                    part,
+                ],
+                how="diagonal_relaxed",
             )
-            storage.write_parquet(f"silver/cftc_cot/market=GLOBAL/year={y}.parquet", df)
-            done.append(y)
-        except Exception as e:
-            errors[str(y)] = f"{type(e).__name__}: {e}"[:160]
-    if errors:
-        raise RuntimeError(f"cftc errors={errors}")
-    return {"years": done}
+        storage.write_parquet(key, part.sort(["market", "as_of"]))
+        years.append(y)
+    counts = df.group_by("market").agg(pl.len(), pl.col("as_of").min()).sort("market").rows()
+    if df.height == 0:
+        raise RuntimeError("cftc: no rows")
+    return {"rows": df.height, "years": years, "markets": [[m, n, str(d)] for m, n, d in counts]}
 
 
 def run_pcr(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dict[str, Any]:
