@@ -3,9 +3,10 @@
 1) FINRA margin statistics (monthly, 1997-):
    https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics (xlsx link scraped)
    published_at rule: month end + 25 days, 23:59 UTC (FINRA publishes in the third week of the next month).
-2) CFTC Commitments of Traders, futures only (weekly, report date = Tuesday):
-   financial futures (TFF)  https://www.cftc.gov/files/dea/history/fut_fin_txt_{Y}.zip
-   disaggregated (commod.)  https://www.cftc.gov/files/dea/history/fut_disagg_txt_{Y}.zip
+2) CFTC Commitments of Traders, futures only (weekly, report date = Tuesday), via the CFTC public reporting API
+   (the www.cftc.gov yearly zip files are blocked from GitHub Actions runners):
+   financial futures (TFF)  https://publicreporting.cftc.gov/resource/gpe5-46if.json
+   disaggregated (commod.)  https://publicreporting.cftc.gov/resource/72hh-3qpy.json
    published_at rule: report date + 3 days (Friday) 22:00 UTC -> usable from the next session
    (released Fridays 15:30 ET; holiday weeks slip, so the next-session rule keeps it conservative).
 3) Cboe put/call ratios (daily):
@@ -25,12 +26,15 @@ import json
 import re
 import zipfile
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 import openpyxl
 import polars as pl
 
 FINRA_PAGE = "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics"
 FINRA_RE = re.compile(r'href="([^"]*margin-statistics[^"]*\.xlsx)"', re.I)
+COT_API = "https://publicreporting.cftc.gov/resource/{ds}.json"
+COT_DATASETS = {"tff": "gpe5-46if", "disagg": "72hh-3qpy"}
 CFTC_TFF = "https://www.cftc.gov/files/dea/history/fut_fin_txt_{y}.zip"
 CFTC_DIS = "https://www.cftc.gov/files/dea/history/fut_disagg_txt_{y}.zip"
 CBOE_CSV = "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/{kind}pc.csv"
@@ -113,6 +117,53 @@ TFF_GROUPS = {"dealer": ("Dealer_Positions_Long_All", "Dealer_Positions_Short_Al
               "lev_money": ("Lev_Money_Positions_Long_All", "Lev_Money_Positions_Short_All")}  # fmt: skip
 DIS_GROUPS = {"producer": ("Prod_Merc_Positions_Long_All", "Prod_Merc_Positions_Short_All"),
               "managed_money": ("M_Money_Positions_Long_All", "M_Money_Positions_Short_All")}  # fmt: skip
+# field names in the public reporting API (lower case, some without the _all suffix)
+API_GROUPS = {
+    "tff": {"dealer": ("dealer_positions_long_all", "dealer_positions_short_all"),
+            "asset_mgr": ("asset_mgr_positions_long", "asset_mgr_positions_short"),
+            "lev_money": ("lev_money_positions_long", "lev_money_positions_short")},
+    "disagg": {"producer": ("prod_merc_positions_long", "prod_merc_positions_short"),
+               "managed_money": ("m_money_positions_long_all", "m_money_positions_short_all")},
+}  # fmt: skip
+API_MARKETS = {"tff": TFF_MARKETS, "disagg": DIS_MARKETS}
+
+
+def cot_api_params(
+    kind: str, code: str, since: date, offset: int, limit: int = 5000
+) -> dict[str, str]:
+    return {"cftc_contract_market_code": code, "$where": f"report_date_as_yyyy_mm_dd >= '{since.isoformat()}'",
+            "$order": "report_date_as_yyyy_mm_dd", "$limit": str(limit), "$offset": str(offset)}  # fmt: skip
+
+
+def parse_cot_api(rows: list[dict[str, str]], kind: str) -> pl.DataFrame:
+    groups = API_GROUPS[kind]
+    markets = API_MARKETS[kind]
+
+    def num(r: dict[str, str], k: str) -> float | None:
+        try:
+            return float(r[k])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    out = []
+    for r in rows:
+        code = str(r.get("cftc_contract_market_code", "")).strip()
+        if code not in markets:
+            continue
+        d = date.fromisoformat(str(r["report_date_as_yyyy_mm_dd"])[:10])
+        rec: dict[str, object] = {
+            "market": markets[code],
+            "as_of": d,
+            "open_interest": num(r, "open_interest_all"),
+        }
+        for g, (lo, sh) in groups.items():
+            a, b = num(r, lo), num(r, sh)
+            rec[f"net_{g}"] = a - b if a is not None and b is not None else None
+        rec["published_at"] = _utc(d + timedelta(days=3), 22)
+        out.append(rec)
+    schema: dict[str, Any] = {"market": pl.String, "as_of": pl.Date, "open_interest": pl.Float64, **{f"net_{g}": pl.Float64 for g in groups},
+              "published_at": pl.Datetime("us", "UTC")}  # fmt: skip
+    return pl.DataFrame(out, schema=schema)
 
 
 # ---------------------------------------------------------------- Cboe put/call
