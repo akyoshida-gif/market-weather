@@ -34,6 +34,11 @@ FEATURES = {"f_atr_pct": "値動きの大きさ（ATR÷株価）", "f_dvol20": "
             "f_ret63": "直前3か月の騰落率", "f_dist_hi": "52週高値からの距離"}  # fmt: skip
 MIN_DEV = 30  # minimum events in the search window (VALIDATION_PLAN §4); fewer -> "参考"
 MIN_SLICE = 10  # a period counts in the grade only with this many events
+MIN_TEST = 20  # events needed in the confirmation period and after removing the 5 busiest days
+MIN_T_SEARCH = 2.0  # day-clustered t of the R expectancy in the search window
+MIN_T_TEST = 1.5  # same in the confirmation period
+MAX_TOP5_SHARE = 0.5  # at most half of the events may sit on the 5 busiest days
+MIN_DAYS = 20  # the search keeps only patterns that occurred on at least this many different days
 CUT_END = date(2024, 12, 31)
 MIN_CUT_ROWS = (
     1000  # a numeric stock feature needs this many rows up to CUT_END to define its cut points
@@ -379,6 +384,9 @@ class Study:
                 sl |= {f"vol{t}": idx[(self.tier[idx] == t) & (win | test)] for t in (1, 2, 3, 4)}
             s: dict[str, Any] = {k: self.stats(v, h) for k, v in sl.items()}
             s["top5_share"] = s_top5 if len(counts) else None
+            s["market_wide"] = all(
+                c.lstrip("!") in self.day_cond or c.startswith("c_mkt_") for c in conds
+            )
             if h in self.rh:
                 # pick the stop with the best expectancy in the search window, then report it everywhere
                 cand = {st: self.rstats(sl["search"], st, h) for st in features.STOPS}
@@ -419,37 +427,48 @@ GRADES = ["主力候補（長寿命）", "主力候補（新しい傾向）", "�
 
 
 def grade(s: dict[str, Any], has_test: bool = True) -> str:
-    """VALIDATION_PLAN §5-3. Uses the R expectancy of the best stop (chosen in the search window) when
-    available, otherwise the after-cost mean return; 'better than the universe' = mean excess return > 0."""
+    """VALIDATION_PLAN §5-3 (tightened 2026-10-27 after the first full run, §5-4).
+
+    Uses the R expectancy of the best stop (chosen in the search window) when available, otherwise the
+    after-cost mean return. 'Better than the universe' = mean excess return > 0 (skipped for market-wide
+    conditions, which fire for every stock on the same day so their excess return is ~0 by construction).
+    """
     R = s.get("R")
 
-    def val(k: str) -> tuple[int, float]:
+    def val(k: str) -> tuple[int, float, float]:
         if R and R.get(k, {}).get("n", 0):
-            return R[k]["n"], R[k]["exp"]
+            return R[k]["n"], R[k]["exp"], R[k].get("t", 0.0) or 0.0
         v = s.get(k, {})
-        return v.get("n", 0), v.get("net", 0.0)
+        return v.get("n", 0), v.get("net", 0.0) or 0.0, v.get("xt", 0.0) or 0.0
 
-    n_s, e_s = val("search")
+    n_s, e_s, t_s = val("search")
     if n_s < MIN_DEV:
         return "参考"
-    strong = e_s > 0 and s["search"].get("xmean", -1) > 0
-    if not strong:
+    x_s = s["search"].get("xmean")
+    market_wide = s.get("market_wide", False)
+    if e_s <= 0 or (not market_wide and (x_s is None or x_s <= 0)):
         return "不採用"
-    n_x, e_x = val("ex_top5")
+    n_x, e_x, _ = val("ex_top5")
+    conc = s.get("top5_share")
+    spread_ok = n_x >= MIN_TEST and e_x > 0 and (conc is None or conc <= MAX_TOP5_SHARE)
+    if t_s < MIN_T_SEARCH or not spread_ok:
+        return "観察" if spread_ok or n_x >= MIN_SLICE else "不採用"
     if not has_test:
-        return "観察" if (n_x >= MIN_SLICE and e_x > 0) else "不採用"
-    n_t, e_t = val("test")
+        return "観察"
+    n_t, e_t, t_t = val("test")
     halves = [val("search_1st"), val("search_2nd")]
     halves_ok = (
-        all(n >= MIN_SLICE and e > 0 for n, e in halves) if all(n for n, _ in halves) else True
+        all(n >= MIN_SLICE and e > 0 for n, e, _ in halves)
+        if all(n for n, _, _ in halves)
+        else True
     )
-    if n_t < MIN_SLICE or e_t <= 0 or e_x <= 0 or not halves_ok:
+    if n_t < MIN_TEST or e_t <= 0 or t_t < MIN_T_TEST or not halves_ok:
         return "観察"
     old = [val(b[0]) for b in BLOCKS[:3]]
-    old = [e for n, e in old if n >= MIN_SLICE]
+    old_e = [e for n, e, _ in old if n >= MIN_SLICE]
     return (
         "主力候補（長寿命）"
-        if old and sum(e > 0 for e in old) * 2 > len(old)
+        if old_e and sum(e > 0 for e in old_e) * 2 > len(old_e)
         else "主力候補（新しい傾向）"
     )
 
@@ -491,6 +510,8 @@ class SearchView:
         n = len(sel)
         if n < 2:
             return n, 0.0, 0.0
+        if len(np.unique(self.rk[sel])) < MIN_DAYS:
+            return 0, 0.0, 0.0  # one event (e.g. a single crash-rebound day) is not a pattern
         x = self.x[sel]
         return n, float(x.mean()), _clustered_t(x, self.rk[sel])
 
