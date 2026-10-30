@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import sys
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -20,10 +21,13 @@ from mw.core.http import HttpClient
 from mw.core.logging import job_run, setup_logging
 from mw.core.storage import GuardedStorage, open_storage
 from mw.ingest.base import raw_key, record_manifest, remote_raw_ref, write_raw_bytes
+from mw.ingest.macro import calendar as K
 from mw.ingest.us import fundamentals as F
+from mw.ingest.us import holdings_13f as H
 from mw.ingest.us import market_extra as X
 from mw.ingest.us import sec_filings
 from mw.ingest.us import sec_reference as R
+from mw.ingest.us import wiki_views as W
 from mw.universe import sp500
 
 VERSION = "0.1.0"
@@ -204,6 +208,141 @@ def run_fundamentals(
         "errors": dict(list(errors.items())[:20]),
         "n_errors": len(errors),
     }
+
+
+def run_13f(storage: GuardedStorage, sec: sec_filings.SecClient, backfill: bool) -> dict[str, Any]:
+    """Form 13F data sets: one aggregated file per filing window (managers / shares / value per CUSIP)."""
+    urls = H.links(sec.get(H.PAGE).decode("utf-8", "replace"))
+    todo = urls if backfill else urls[-2:]
+    done, skipped, errors, manifest = [], 0, {}, []
+    for url in todo:
+        name = H.window_name(url)
+        key = f"silver/sec_13f/market=US/window={name}.parquet"
+        if storage.exists(key) and url != urls[-1]:
+            skipped += 1
+            continue
+        try:
+            now = datetime.now(UTC)
+            data = sec.get(url)
+            rk = raw_key("sec_13f", now, f"{name}.zip")
+            sha = hashlib.sha256(data).hexdigest()
+            manifest.append(
+                {
+                    "raw_key": rk,
+                    "url": url,
+                    "sha256": sha,
+                    "bytes": len(data),
+                    "recorded_at": now.isoformat(),
+                }
+            )
+            df = H.parse_window(data).with_columns(
+                H.published_at(pl.col("period")).alias("published_at"), pl.lit(name).alias("window")
+            )
+            storage.write_parquet(key, _pit(df, "sec_13f", f"{rk}#sha256={sha}", now))
+            done.append(name)
+        except Exception as e:
+            errors[name] = f"{type(e).__name__}: {e}"[:300]
+    record_manifest(storage, "sec_13f", manifest)
+    if errors and not done:
+        raise RuntimeError(f"13f errors={errors}")
+    return {"windows": len(urls), "ingested": done, "skipped": skipped, "errors": errors}
+
+
+def run_calendar(storage: GuardedStorage, http: HttpClient, backfill: bool) -> dict[str, Any]:
+    """FOMC decision dates (Federal Reserve site) and US data release dates (FRED)."""
+    now = datetime.now(UTC)
+    html = http.get(K.FOMC_CURRENT).text
+    _store(storage, "event_calendar", "fomccalendars.htm", html.encode(), now)
+    dates = K.parse_current(html)
+    first_current = min(dates).year if dates else now.year
+    for y in range(2009, first_current):
+        h = http.get(K.FOMC_HISTORICAL.format(y=y)).text
+        _store(storage, "event_calendar", f"fomchistorical{y}.htm", h.encode(), now)
+        dates += K.parse_historical(h, y)
+    frames = [K.fomc_frame(dates)]
+    key = os.environ.get("FRED_API_KEY")
+    if key:
+        for rid, name in K.RELEASES.items():
+            params = {
+                "release_id": rid,
+                "api_key": key,
+                "file_type": "json",
+                "include_release_dates_with_no_data": "true",
+                "limit": 10000,
+            }
+            try:
+                r = http.get(K.FRED_RELEASE_DATES, params=params)
+                frames.append(K.parse_release_dates(r.json(), name))
+            except Exception as e:  # never surface the URL (it contains the API key) in logs
+                raise RuntimeError(
+                    f"FRED release dates failed for {name}: {type(e).__name__}"
+                ) from None
+    df = (
+        pl.concat(frames)
+        .filter(pl.col("date") >= date(2009, 1, 1))
+        .unique()
+        .sort(["event", "date"])
+    )
+    storage.write_parquet(
+        "silver/event_calendar/market=US/latest.parquet",
+        _pit(df, "event_calendar", "fed+fred", now),
+    )
+    counts = (
+        df.group_by("event")
+        .agg(pl.len(), pl.col("date").min(), pl.col("date").max())
+        .sort("event")
+        .rows()
+    )
+    return {"events": [[e, n, str(a), str(b)] for e, n, a, b in counts]}
+
+
+def run_wiki(storage: GuardedStorage, backfill: bool) -> dict[str, Any]:
+    """Daily Wikipedia page views per company, 64 buckets by ticker (each bucket rewritten as a whole)."""
+    now = datetime.now(UTC)
+    http = HttpClient(rate_per_host=20.0, user_agent=W.UA)
+    r = http.get(
+        W.SPARQL,
+        params={"query": W.QUERY, "format": "json"},
+        headers={"Accept": "application/sparql-results+json"},
+    )
+    _store(storage, "wiki_views", "wikidata_mapping.json", r.content, now)
+    mapping = W.parse_mapping(r.json())
+    storage.write_parquet("silver/wiki_views/market=US/mapping.parquet", mapping)
+    end = now.date()
+    start = W.FIRST if backfill else end - timedelta(days=45)
+    done, errors = 0, {}
+    by_bucket: dict[int, list[tuple[str, str]]] = {}
+    for e, a in mapping.iter_rows():
+        by_bucket.setdefault(int(hashlib.md5(e.encode()).hexdigest(), 16) % 64, []).append((e, a))
+    for b, group in sorted(by_bucket.items()):
+        frames = []
+        for ent, art in group:
+            try:
+                resp = http.get(W.views_url(art, start, end))
+                if resp.status_code == 404:
+                    continue
+                frames.append(W.parse_views(resp.json(), ent))
+                done += 1
+            except Exception as ex:
+                errors[ent] = f"{type(ex).__name__}"[:60]
+        if not frames:
+            continue
+        new = pl.concat(frames).with_columns(W.published_at(pl.col("as_of")).alias("published_at"))
+        key = f"silver/wiki_views/market=US/bucket={b:02d}.parquet"
+        if storage.exists(key):
+            old = storage.read_parquet(key)
+            new = pl.concat(
+                [
+                    old.join(
+                        new.select("entity_id", "as_of"), on=["entity_id", "as_of"], how="anti"
+                    ),
+                    new,
+                ],
+                how="diagonal_relaxed",
+            )
+        storage.write_parquet(key, new.sort(["entity_id", "as_of"]))
+    http.close()
+    return {"mapped": mapping.height, "fetched": done, "n_errors": len(errors), "from": str(start)}
 
 
 def run_shares(
@@ -403,7 +542,10 @@ def run_sic(storage: GuardedStorage, backfill: bool) -> dict[str, Any]:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--sources", default="sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals")
+    p.add_argument(
+        "--sources",
+        default="sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals,13f,calendar,wiki",
+    )
     p.add_argument("--backfill", action="store_true")
     args = p.parse_args()
     setup_logging()
@@ -425,6 +567,9 @@ def main() -> int:
         "insider": lambda: run_insider(storage, sec(), args.backfill),
         "shares": lambda: run_shares(storage, sec(), args.backfill),
         "fundamentals": lambda: run_fundamentals(storage, sec(), args.backfill),
+        "13f": lambda: run_13f(storage, sec(), args.backfill),
+        "calendar": lambda: run_calendar(storage, web, args.backfill),
+        "wiki": lambda: run_wiki(storage, args.backfill),
         "margin": lambda: run_margin(storage, web, args.backfill),
         "cftc": lambda: run_cftc(storage, web, args.backfill),
         "pcr": lambda: run_pcr(storage, web, args.backfill),
