@@ -39,6 +39,7 @@ class Backend(Protocol):
     def exists(self, key: str) -> bool: ...
     def list(self, prefix: str) -> list[str]: ...
     def total_bytes(self) -> int: ...
+    def delete(self, key: str) -> None: ...
 
 
 def _check_key(key: str) -> str:
@@ -83,6 +84,9 @@ class LocalFS:
     def total_bytes(self) -> int:
         return sum(p.stat().st_size for p in self.root.rglob("*") if p.is_file())
 
+    def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
+
 
 class S3Compatible:
     """Cloudflare R2 (S3-compatible). Credentials from env; never logged."""
@@ -114,6 +118,9 @@ class S3Compatible:
     def exists(self, key: str) -> bool:
         resp = self.client.list_objects_v2(Bucket=self.bucket, Prefix=_check_key(key), MaxKeys=1)
         return any(o.get("Key") == key for o in resp.get("Contents", []))
+
+    def delete(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.bucket, Key=_check_key(key))
 
     def list(self, prefix: str) -> list[str]:
         keys: list[str] = []
@@ -203,6 +210,19 @@ class GuardedStorage:
     def list(self, prefix: str) -> list[str]:
         self._usage["class_a"] += 1  # LIST is a Class A op on R2
         return self.backend.list(prefix)
+
+    def delete(self, key: str, *, retire_raw: bool = False) -> None:
+        """Delete one object. The forecast ledger can never be deleted.
+
+        raw/ only with retire_raw=True, which callers use after recording the object's
+        source URL and sha256 in raw_manifest/ (ADR-0019).
+        """
+        if key.startswith("ledger/"):
+            raise StorageError(f"refusing to delete ledger object: {key}")
+        if key.startswith("raw/") and not retire_raw:
+            raise StorageError(f"refusing to delete raw object without retire_raw: {key}")
+        self.backend.delete(key)
+        self._usage["class_a"] += 1
 
     def write_parquet(self, key: str, df: pl.DataFrame, *, overwrite: bool = True) -> None:
         buf = io.BytesIO()
