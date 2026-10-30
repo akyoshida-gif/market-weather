@@ -249,7 +249,13 @@ def test_lookback_feature_is_dropped_after_a_data_error() -> None:
     out = build.lookback_clean(df)
     assert out["f_ret252"].to_list() == [0.1, None, None, None, None]
     assert out["c_new_high_252"].to_list() == [True, False, False, False, False]
-    assert out["f_ret5"].to_list() == [0.1, 0.2, 0.3, 0.4, 0.5]  # short-window features are untouched
+    assert out["f_ret5"].to_list() == [
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+    ]  # short-window features are untouched
 
 
 def test_market_wide_condition_must_beat_holding_everything() -> None:
