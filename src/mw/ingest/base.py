@@ -105,3 +105,40 @@ def upsert_by_date(
         storage.write_parquet(key, merged)
         out[str(d)] = merged.height
     return out
+
+
+MANIFEST_PREFIX = "raw_manifest/"
+
+
+def manifest_key(source_id: str) -> str:
+    return f"{MANIFEST_PREFIX}{source_id}.parquet"
+
+
+def record_manifest(storage: GuardedStorage, source_id: str, rows: list[dict[str, Any]]) -> None:
+    """Append rows (raw_key, url, sha256, bytes, recorded_at) to the manifest (ADR-0019)."""
+    if not rows:
+        return
+    key = manifest_key(source_id)
+    new = pl.DataFrame(rows)
+    if storage.exists(key):
+        old = storage.read_parquet(key)
+        new = pl.concat(
+            [old.filter(~pl.col("raw_key").is_in(new["raw_key"].implode())), new],
+            how="diagonal_relaxed",
+        )
+    storage.write_parquet(key, new.sort("raw_key"))
+
+
+def remote_raw_ref(
+    storage: GuardedStorage, source_id: str, name: str, url: str, data: bytes, ingest_dt: datetime
+) -> str:
+    """Large datasets the source keeps publishing (SEC bulk files): keep no copy.
+
+    Only the URL and sha256 go to the manifest. The returned raw_ref names the virtual
+    raw key, so lineage stays traceable.
+    """
+    rk = raw_key(source_id, ingest_dt, name)
+    sha = hashlib.sha256(data).hexdigest()
+    row = {"raw_key": rk, "url": url, "sha256": sha, "bytes": len(data)}
+    record_manifest(storage, source_id, [{**row, "recorded_at": ingest_dt.isoformat()}])
+    return f"{rk}#sha256={sha}"

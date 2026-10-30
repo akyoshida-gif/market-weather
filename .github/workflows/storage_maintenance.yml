@@ -1,0 +1,50 @@
+# Storage maintenance (ADR-0019). Manual only; dry run unless "execute" is true.
+name: storage_maintenance
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "prune-research | retire-raw"
+        required: true
+      arg:
+        description: "prune-research: runs to keep (comma separated) / retire-raw: source (sec_insider)"
+        required: true
+      execute:
+        description: "true = actually delete (default: dry run)"
+        required: false
+        default: "false"
+permissions:
+  contents: read
+concurrency:
+  group: storage_maintenance
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Run
+        env:
+          MW_STORAGE_BACKEND: r2
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          CMD: ${{ inputs.command }}
+          ARG: ${{ inputs.arg }}
+          EXEC: ${{ inputs.execute }}
+        run: |
+          [[ "$ARG" =~ ^[A-Za-z0-9_,]+$ ]] || { echo "invalid arg"; exit 1; }
+          case "$CMD" in
+            prune-research) ARGS="prune-research --keep $ARG";;
+            retire-raw) ARGS="retire-raw --source $ARG";;
+            *) echo "unknown command"; exit 1;;
+          esac
+          [ "$EXEC" = "true" ] && ARGS="$ARGS --execute"
+          echo "args: $ARGS"
+          uv run python -m jobs.storage_maintenance $ARGS

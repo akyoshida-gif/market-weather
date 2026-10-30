@@ -18,7 +18,7 @@ from mw.core.config import load_settings
 from mw.core.http import HttpClient
 from mw.core.logging import job_run, setup_logging
 from mw.core.storage import GuardedStorage, open_storage
-from mw.ingest.base import raw_key, write_raw_bytes
+from mw.ingest.base import raw_key, remote_raw_ref, write_raw_bytes
 from mw.ingest.us import market_extra as X
 from mw.ingest.us import sec_filings
 from mw.ingest.us import sec_reference as R
@@ -106,8 +106,10 @@ def run_insider(
         try:
             now = datetime.now(UTC)
             data = sec.get(url)
-            rk = raw_key("sec_insider", now, f"{quarter}_form345_{now:%H%M%S}.zip")
-            ref = f"{rk}#sha256={write_raw_bytes(storage, rk, data)}"
+            # SEC keeps publishing these files: record URL + sha256 instead of a copy (ADR-0019)
+            ref = remote_raw_ref(
+                storage, "sec_insider", f"{quarter}_form345_{now:%H%M%S}.zip", url, data, now
+            )
             df = R.parse_insider(data).with_columns(
                 pl.when(pl.col("symbol").is_not_null() & (pl.col("symbol") != ""))
                 .then(pl.lit("US:") + pl.col("symbol"))

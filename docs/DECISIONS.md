@@ -150,3 +150,10 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 - Owner: no need to discover anything new; use the textbook (candlesticks, chart patterns, stage analysis, MA/MACD/RSI) and find which known setups work in which market context; context matters; using hindsight is forbidden.
 - New plan in `docs/VALIDATION_PLAN_V3.md`: market phase -> sector -> Weinstein stage -> stock quality (fundamentals) -> textbook setup, rules written before testing, buy-stop entries, textbook stops/targets, comparison with random entries, walk-forward, Monte Carlo, visual checks of pattern detection with the owner.
 - Data: use everything available, add fundamentals (SEC XBRL), 13F, event calendars, NAAIM, Wikipedia pageviews, 1-hour bars; weekly and monthly views. Delisted stocks are not purchased (known survivorship limitation).
+
+## ADR-0019 | 2026-10-30 | accepted | Source-hosted bulk files keep a manifest instead of a raw copy; storage maintenance
+
+- R2 reached 7.2 GB of the 8 GB soft limit (free tier 10 GB); new bulk sources (13F, XBRL) would add several GB of raw copies.
+- Owner (2026-10-30): (A) delete superseded research results (they can be regenerated); (B) for large datasets the source keeps publishing permanently (SEC insider data sets, XBRL, 13F), keep only the processed silver data plus a manifest (`raw_manifest/<source>.parquet`: raw_key, URL, sha256, bytes) instead of the raw copy, and retire the existing insider raw copies. If this is not enough, accept paid R2 beyond 10 GB (option C).
+- Safety: `GuardedStorage.delete` never deletes `ledger/`; `raw/` only with `retire_raw=True`, used after the manifest is written. Maintenance runs as a manual workflow with a dry run by default (`jobs/storage_maintenance.py`).
+- This relaxes the "raw is always kept" principle only for source-hosted bulk files; everything else keeps raw copies as before.
