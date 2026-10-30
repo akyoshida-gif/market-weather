@@ -52,3 +52,20 @@ def test_skip_fill_when_open_below_stop(tmp_path):
     df = ind([(100, 101, 99, 100), (94, 95, 93, 94), (94, 95, 93, 94)])
     r = trader.run(s, "US", {"t": strat()}, df, start=date(2026, 1, 5))
     assert r["books"]["t"]["closed"] == 0 and r["books"]["t"]["open"] == 0
+
+
+def test_incomplete_latest_session_is_not_processed() -> None:
+    from datetime import date, timedelta
+
+    import polars as pl
+
+    from mw.paper import trader
+
+    days = [date(2026, 10, 19) + timedelta(days=i) for i in range(8)]
+    rows = []
+    for i, d in enumerate(days):
+        n = 100 if i < 7 else 8  # the latest session has only 8% of the stocks so far
+        rows += [{"as_of": d, "entity_id": f"US:S{k}"} for k in range(n)]
+    done = trader.complete_sessions(pl.DataFrame(rows))
+    assert days[6] in done
+    assert days[7] not in done
