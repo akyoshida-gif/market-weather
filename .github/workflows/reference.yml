@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       sources:
-        description: "sp500,ftd,insider,shares,margin,cftc,pcr,sic"
+        description: "sp500,ftd,insider,shares,margin,cftc,pcr,sic,fundamentals"
         required: false
-        default: "sp500,ftd,insider,shares,margin,cftc,pcr"
+        default: "sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals"
       backfill:
         description: "fetch full history (true/false)"
         required: false
@@ -40,7 +40,7 @@ jobs:
           IN_SOURCES: ${{ inputs.sources }}
           IN_BACKFILL: ${{ inputs.backfill }}
         run: |
-          ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares,margin,cftc,pcr}"
+          ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals}"
           [ "$IN_BACKFILL" = "true" ] && ARGS="$ARGS --backfill"
           echo "args: $ARGS"
           uv run python -m jobs.reference_data $ARGS

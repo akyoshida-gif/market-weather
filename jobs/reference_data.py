@@ -8,6 +8,7 @@ Normal mode fetches only files not yet stored (plus the latest few); --backfill 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -18,7 +19,8 @@ from mw.core.config import load_settings
 from mw.core.http import HttpClient
 from mw.core.logging import job_run, setup_logging
 from mw.core.storage import GuardedStorage, open_storage
-from mw.ingest.base import raw_key, remote_raw_ref, write_raw_bytes
+from mw.ingest.base import raw_key, record_manifest, remote_raw_ref, write_raw_bytes
+from mw.ingest.us import fundamentals as F
 from mw.ingest.us import market_extra as X
 from mw.ingest.us import sec_filings
 from mw.ingest.us import sec_reference as R
@@ -123,6 +125,85 @@ def run_insider(
         except Exception as e:
             errors[quarter] = f"{type(e).__name__}: {e}"[:160]
     return {"links": len(links), "ingested": done, "skipped": skipped, "errors": errors}
+
+
+FUND_BUCKETS = 64
+
+
+def _recent_filers(storage: GuardedStorage, days: int) -> set[int]:
+    """CIKs that filed a 10-Q / 10-K (or foreign annual report) in the last `days` days."""
+    today = datetime.now(UTC).date()
+    keys = [
+        f"silver/sec_filings/market=US/date={(today - timedelta(days=i)).isoformat()}.parquet"
+        for i in range(days)
+    ]
+    keys = [k for k in keys if storage.exists(k)]
+    if not keys:
+        return set()
+    df = pl.concat(
+        [storage.read_parquet(k).select("cik", "form") for k in keys], how="vertical_relaxed"
+    )
+    df = df.filter(pl.col("form").str.contains(r"^(10-Q|10-K|20-F|40-F)"))
+    return set(df["cik"].cast(pl.Int64, strict=False).drop_nulls().to_list())
+
+
+def run_fundamentals(
+    storage: GuardedStorage, sec: sec_filings.SecClient, backfill: bool
+) -> dict[str, Any]:
+    """XBRL company facts per company, stored in 64 buckets by CIK (each bucket rewritten as a whole)."""
+    tick = sec_filings.ticker_map(sec.get(sec_filings.TICKERS))
+    ciks = sorted(tick["cik"].to_list())
+    if not backfill:
+        recent = _recent_filers(storage, 14)
+        ciks = [c for c in ciks if c in recent]
+    by_bucket: dict[int, list[int]] = {}
+    for c in ciks:
+        by_bucket.setdefault(c % FUND_BUCKETS, []).append(c)
+    done, missing, errors, manifest = 0, 0, {}, []
+    for b, group in sorted(by_bucket.items()):
+        frames = []
+        for cik in group:
+            url = F.COMPANYFACTS.format(cik=cik)
+            try:
+                resp = sec.http.get(url)
+                if resp.status_code == 404:
+                    missing += 1  # no XBRL financials (e.g. funds, very new listings)
+                    continue
+                resp.raise_for_status()
+                now = datetime.now(UTC)
+                data = resp.content
+                rk = raw_key("sec_fundamentals", now, f"CIK{cik:010d}.json")
+                manifest.append({"raw_key": rk, "url": url, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+                                 "recorded_at": now.isoformat()})  # fmt: skip
+                q = F.quarterly(F.parse_companyfacts(data))
+                if q.height:
+                    frames.append(_pit(q.with_columns(F.published_at(pl.col("filed")).alias("published_at")),
+                                       "sec_fundamentals", f"{rk}#sha256={manifest[-1]['sha256']}", now))  # fmt: skip
+                done += 1
+            except Exception as e:
+                errors[str(cik)] = f"{type(e).__name__}: {e}"[:120]
+        if not frames:
+            continue
+        new = pl.concat(frames, how="diagonal_relaxed")
+        key = f"silver/sec_fundamentals/market=US/bucket={b:02d}.parquet"
+        if storage.exists(key):
+            old = storage.read_parquet(key)
+            new = pl.concat(
+                [old.filter(~pl.col("cik").is_in(new["cik"].unique().implode())), new],
+                how="diagonal_relaxed",
+            )
+        storage.write_parquet(key, new.sort(["cik", "concept", "period", "end", "filed"]))
+        if len(manifest) >= 500:
+            record_manifest(storage, "sec_fundamentals", manifest)
+            manifest = []
+    record_manifest(storage, "sec_fundamentals", manifest)
+    return {
+        "companies": len(ciks),
+        "ok": done,
+        "no_xbrl": missing,
+        "errors": dict(list(errors.items())[:20]),
+        "n_errors": len(errors),
+    }
 
 
 def run_shares(
@@ -322,7 +403,7 @@ def run_sic(storage: GuardedStorage, backfill: bool) -> dict[str, Any]:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--sources", default="sp500,ftd,insider,shares,margin,cftc,pcr")
+    p.add_argument("--sources", default="sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals")
     p.add_argument("--backfill", action="store_true")
     args = p.parse_args()
     setup_logging()
@@ -343,6 +424,7 @@ def main() -> int:
         "ftd": lambda: run_ftd(storage, sec(), args.backfill),
         "insider": lambda: run_insider(storage, sec(), args.backfill),
         "shares": lambda: run_shares(storage, sec(), args.backfill),
+        "fundamentals": lambda: run_fundamentals(storage, sec(), args.backfill),
         "margin": lambda: run_margin(storage, web, args.backfill),
         "cftc": lambda: run_cftc(storage, web, args.backfill),
         "pcr": lambda: run_pcr(storage, web, args.backfill),
