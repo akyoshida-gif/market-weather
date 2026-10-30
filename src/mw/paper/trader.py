@@ -215,6 +215,23 @@ def annotate(ind: pl.DataFrame, strategies: dict[str, engine.Strategy]) -> pl.Da
     )
 
 
+COMPLETE_SHARE = (
+    0.9  # a session counts as complete when it has this share of the usual number of stocks
+)
+
+
+def complete_sessions(ann: pl.DataFrame, lookback: int = 10) -> set[date]:
+    """Sessions whose stock count reaches COMPLETE_SHARE of the median of the previous `lookback` sessions."""
+    counts = ann.group_by("as_of").agg(pl.len().alias("n")).sort("as_of")
+    ds, ns = counts["as_of"].to_list(), counts["n"].to_list()
+    out = set()
+    for i, (d, n) in enumerate(zip(ds, ns, strict=True)):
+        prev = ns[max(0, i - lookback) : i]
+        if len(prev) < 3 or n >= COMPLETE_SHARE * float(np.median(prev)):
+            out.add(d)
+    return out
+
+
 def run(
     storage: GuardedStorage, market: str, strategies: dict[str, engine.Strategy], ind: pl.DataFrame,
     start: date | None = None,
@@ -224,6 +241,12 @@ def run(
     sessions = sorted(set(ann["as_of"].to_list()))
     last = date.fromisoformat(st["last_session"]) if st["last_session"] else None
     todo = [d for d in sessions if (last is None or d > last) and (start is None or d >= start)]
+    # a session whose prices are still arriving (Yahoo fills the latest day over several hours) must not be
+    # processed: it would be marked done with most stocks missing and its signals would be lost for good
+    complete = complete_sessions(ann)
+    waiting = next((d for d in todo if d not in complete), None)
+    if waiting is not None:
+        todo = [d for d in todo if d < waiting]
     if last is None and start is None:
         todo = todo[-1:]  # forward-only: first run starts with the latest session (signals only)
     all_events: list[dict[str, Any]] = []
@@ -246,6 +269,7 @@ def run(
         state_key(market), json.dumps(st, ensure_ascii=False, default=str).encode(), overwrite=True
     )
     return {"sessions": [d.isoformat() for d in todo], "events": len(all_events),
+            "waiting_for": waiting.isoformat() if waiting else None,
             "books": {k: {"equity": round(v.get("equity", v["cash"]), 2), "open": len(v["positions"]), "orders": len(v["orders"]), "closed": v["closed"]} for k, v in st["books"].items()}}  # fmt: skip
 
 

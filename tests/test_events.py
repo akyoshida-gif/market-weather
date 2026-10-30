@@ -218,7 +218,11 @@ def test_grade_rules() -> None:
     assert events.grade(base | blocks_up | {"search": s(-0.01)}) == "不採用"
     assert events.grade(base | blocks_up | {"search": s(0.01, n=10)}) == "参考"
     # market-wide conditions: excess return is ~0 by construction and is not required
-    mk = base | blocks_up | {"search": {"n": 50, "net": 0.01, "xmean": 0.0, "xt": 3.0}, "market_wide": True}
+    mk = (
+        base
+        | blocks_up
+        | {"search": {"n": 50, "net": 0.01, "xmean": 0.0, "xt": 3.0}, "market_wide": True}
+    )
     assert events.grade(mk) == "主力候補（長寿命）"
     # 2025-only search: no confirmation period -> at most "observe"
     assert events.grade(base, has_test=False) == "観察"
