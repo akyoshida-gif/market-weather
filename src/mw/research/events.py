@@ -241,6 +241,7 @@ class Study:
                 a = scan.select(f"r_{s}_{h}_fin", f"r_{s}_{h}_mfe").collect()
                 self.r[f"{s}_{h}_fin"] = a[f"r_{s}_{h}_fin"].to_numpy().astype(np.float16)
                 self.r[f"{s}_{h}_mfe"] = a[f"r_{s}_{h}_mfe"].to_numpy().astype(np.float16)
+        self._base: dict[tuple[str, int, str], float | None] = {}
         log(f"    結果の列を読み込み（{self.n:,} 行）")
 
     # ---- condition masks
@@ -328,6 +329,18 @@ class Study:
         return {"n": n, "exp": float(fin.mean()), "median": float(np.median(fin)), "win": float((fin > 0).mean()),
                 "stopped": float(stopped.mean()), "top10": float(top.mean()), "t": _clustered_t(fin, self.date_rank[idx][ok]),
                 "valid": float(ok.mean()), **{f"hit{k}": float((mfe >= k).mean()) for k in (1, 2, 3, 5, 10)}}  # fmt: skip
+
+    def base_exp(self, stop: str, h: int, which: str) -> float | None:
+        """R expectancy of all eligible stock-days in the search window / confirmation period (cached)."""
+        key = (stop, h, which)
+        if key not in self._base:
+            lo, hi = self.search_mask_h(h)
+            if which == "search":
+                m = (self.date_rank >= lo) & (self.date_rank <= hi)
+            else:
+                m = (self.date_rank >= self.test_lo) if self.test_lo else np.zeros(self.n, bool)
+            self._base[key] = self.rstats(np.flatnonzero(m), stop, h).get("exp")
+        return self._base[key]
 
     def search_mask_h(self, h: int) -> tuple[int, int]:
         """Rank range of the search window whose h-session outcome also ends inside the window."""
@@ -418,6 +431,12 @@ class Study:
                     if full:
                         rs |= {name: self.rstats(sl[name], best, h) for name, _, _ in BLOCKS}
                     s["R"] = {"stop": best, **rs}
+                    if s["market_wide"]:
+                        # a market-wide condition picks days, not stocks: compare with every stock on every day
+                        s["R_base"] = {
+                            "search": self.base_exp(best, h, "search"),
+                            "test": self.base_exp(best, h, "test"),
+                        }
             s["grade"] = grade(s, self.test_lo is not None)
             out[str(h)] = s
         return out
@@ -435,9 +454,17 @@ def grade(s: dict[str, Any], has_test: bool = True) -> str:
     """
     R = s.get("R")
 
+    base = s.get("R_base") or {}
+
     def val(k: str) -> tuple[int, float, float]:
         if R and R.get(k, {}).get("n", 0):
-            return R[k]["n"], R[k]["exp"], R[k].get("t", 0.0) or 0.0
+            # market-wide conditions: what counts is the edge over simply holding every stock that period
+            b = (base.get("test") if k == "test" else base.get("search")) or 0.0
+            e, t = R[k]["exp"], R[k].get("t", 0.0) or 0.0
+            t_adj = (
+                t * (e - b) / e if b and e else t
+            )  # same standard error, measured from the baseline
+            return R[k]["n"], e - b, t_adj
         v = s.get(k, {})
         return v.get("n", 0), v.get("net", 0.0) or 0.0, v.get("xt", 0.0) or 0.0
 
