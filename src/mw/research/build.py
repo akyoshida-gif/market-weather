@@ -133,6 +133,35 @@ def bad_windows(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(out)
 
 
+def lookback_clean(df: pl.DataFrame) -> pl.DataFrame:
+    """Features whose lookback window contains a data-error day become 'no data' (yes/no conditions: false)."""
+    df = df.with_columns(
+        [
+            C("_bad").rolling_sum(w, min_samples=1).over("entity_id").alias(f"_bad{w}")
+            for w in (20, 63, 126, 252)
+        ]
+    )
+    return apply_lookback(df)
+
+
+def apply_lookback(df: pl.DataFrame) -> pl.DataFrame:
+    """Uses the _bad<w> columns from lookback_clean; safe to call again after more features are added."""
+    exprs = []
+    for w, cols in features.LOOKBACK.items():
+        exprs += [
+            pl.when(C(f"_bad{w}") > 0).then(None).otherwise(C(c)).alias(c)
+            for c in cols
+            if c in df.columns
+        ]
+    for w, cols in features.COND_LOOKBACK.items():
+        exprs += [
+            pl.when(C(f"_bad{w}") > 0).then(False).otherwise(C(c)).alias(c)
+            for c in cols
+            if c in df.columns
+        ]
+    return df.with_columns(exprs)
+
+
 KEEP_BASE = ["entity_id", "as_of", "close", "raw_close", "atr", "eligible", "in_sp500", "contig"]
 
 
@@ -213,6 +242,7 @@ def build_us(
         df = events.forward_raw(df)
         df = features.r_outcomes(df)
         df = bad_windows(df)
+        df = lookback_clean(df)
         # R outcomes share the data-error windows of the plain returns
         df = df.with_columns(
             [pl.when(C(f"ret_{h}").is_null()).then(None).otherwise(C(f"r_{s}_{h}_{k}")).alias(f"r_{s}_{h}_{k}")
@@ -223,7 +253,9 @@ def build_us(
             (
                 (C("dvol20") >= min_dvol)
                 & (C("raw_close") >= min_px)
-                & (C("_bad_back") == 0)
+                & (
+                    C("_bad20") == 0
+                )  # no data-error day in the last 20 sessions (short-window features)
                 & C("atr").is_not_null()
             )
             .fill_null(False)
@@ -241,6 +273,7 @@ def build_us(
         df = external.sec_events(storage, df)
         df = external.insiders(storage, df)
         df = df.with_columns([e.cast(pl.Float32) for e in external_features()])
+        df = apply_lookback(df)  # share growth compares with a year ago
         df = df.join(mkt, on="as_of", how="left").join(sic, on="entity_id", how="left")
         # S&P 500 point-in-time membership
         m = (

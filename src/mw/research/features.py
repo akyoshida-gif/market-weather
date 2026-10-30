@@ -33,6 +33,22 @@ STOPS = {
 }
 R_HORIZONS = [5, 20, 60, 120]
 
+# how far back each feature looks (sessions). A data-error day (split / |move| > 60%) inside that window
+# makes the value meaningless (e.g. an unrecorded 1:10 split turns into a "+900% in a year"), so it is
+# set to "no data". Features not listed look back 20 sessions or less (those rows are not eligible at all).
+LOOKBACK = {
+    252: ["f_dist_hi", "f_dist_lo", "f_days_since_hi", "f_ret252", "f_dev_ma200", "f_slope_ma200", "f_ma50_200",
+          "f_sec_corr", "f_sec_rs63", "f_sec_rank", "f_rs_sec20", "f_rs_sec63", "f_rs_ind63", "f_ind_rs63", "f_share_growth"],
+    126: ["f_ret126", "f_rs_spy126", "f_cup", "f_bbw_rel", "f_ichi_cloud"],
+    63: ["f_ret63", "f_rs_spy63", "f_dev_ma50", "f_slope_ma50", "f_ma20_50", "f_pos60", "f_fib", "f_base_width",
+         "f_vcp", "f_lo_retest", "f_contract", "f_pole", "f_hi_slope", "f_lo_slope", "f_ichi_tk"],
+}  # fmt: skip
+COND_LOOKBACK = {
+    252: ["c_new_high_252", "c_near_high_252", "c_above_ma200", "c_below_ma200", "c_po_long", "c_gc_50_200"],
+    63: ["c_break_high_60", "c_pullback_5pct", "c_fib_382", "c_fib_50", "c_fib_618", "c_ma50_rising", "c_reclaim_ma50",
+         "c_ichi_above_cloud", "c_ichi_cloud_break", "c_ichi_tk_cross", "c_ichi_chikou_up", "c_ichi_sanyaku", "c_bb_squeeze"],
+}  # fmt: skip
+
 FEATURE_LABELS = {
     "f_dev_ma5": "5日線からの乖離率", "f_dev_ma20": "20日線からの乖離率", "f_dev_ma50": "50日線からの乖離率",
     "f_dev_ma200": "200日線からの乖離率", "f_slope_ma20": "20日線の傾き（5日）", "f_slope_ma50": "50日線の傾き（10日）",

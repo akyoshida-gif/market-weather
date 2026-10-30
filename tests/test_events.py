@@ -218,7 +218,11 @@ def test_grade_rules() -> None:
     assert events.grade(base | blocks_up | {"search": s(-0.01)}) == "不採用"
     assert events.grade(base | blocks_up | {"search": s(0.01, n=10)}) == "参考"
     # market-wide conditions: excess return is ~0 by construction and is not required
-    mk = base | blocks_up | {"search": {"n": 50, "net": 0.01, "xmean": 0.0, "xt": 3.0}, "market_wide": True}
+    mk = (
+        base
+        | blocks_up
+        | {"search": {"n": 50, "net": 0.01, "xmean": 0.0, "xt": 3.0}, "market_wide": True}
+    )
     assert events.grade(mk) == "主力候補（長寿命）"
     # 2025-only search: no confirmation period -> at most "observe"
     assert events.grade(base, has_test=False) == "観察"
@@ -229,3 +233,35 @@ def test_cost_by_price() -> None:
         events.cost_of(np.array([25.0, 10.0, 2.0])).tolist()
         == np.array([0.001, 0.003, 0.01], dtype=np.float32).tolist()
     )
+
+
+def test_lookback_feature_is_dropped_after_a_data_error() -> None:
+    df = pl.DataFrame(
+        {
+            "entity_id": ["US:A"] * 5,
+            "_bad": [0, 1, 0, 0, 0],
+            "f_ret252": [0.1, 9.0, 9.0, 9.0, 9.0],
+            "f_ret5": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "c_new_high_252": [True] * 5,
+        },
+        schema_overrides={"_bad": pl.Int8},
+    )
+    out = build.lookback_clean(df)
+    assert out["f_ret252"].to_list() == [0.1, None, None, None, None]
+    assert out["c_new_high_252"].to_list() == [True, False, False, False, False]
+    assert out["f_ret5"].to_list() == [0.1, 0.2, 0.3, 0.4, 0.5]  # short-window features are untouched
+
+
+def test_market_wide_condition_must_beat_holding_everything() -> None:
+    def r(e: float, n: int = 50, t: float = 4.0) -> dict:
+        return {"n": n, "exp": e, "t": t}
+
+    s = {
+        "search": {"n": 50, "net": 0.01, "xmean": 0.0},
+        "market_wide": True,
+        "top5_share": 0.2,
+        "R": {"stop": "atr2", "search": r(0.5), "test": r(0.5), "ex_top5": r(0.5)},
+    }
+    assert events.grade(s).startswith("主力候補")
+    # every stock did +0.6R in those periods anyway -> the condition adds nothing
+    assert events.grade(s | {"R_base": {"search": 0.6, "test": 0.6}}) == "不採用"

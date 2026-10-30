@@ -317,7 +317,8 @@ def leading(day: pl.DataFrame, etf: pl.DataFrame, dev_end: Any, targets: list[st
                         res[f"{nm}_corr"] = (
                             float(np.nanmean(cors_a)) if np.isfinite(cors_a).any() else None
                         )
-                        res[f"{nm}_n"] = int(msk.sum() // h)
+                        sel0 = np.flatnonzero(msk)[::h]
+                        res[f"{nm}_n"] = int((np.isfinite(x[sel0]) & np.isfinite(a[sel0])).sum())
                     out.append(res)
     return out
 
@@ -428,6 +429,14 @@ def rotation(
                         v = v[np.isfinite(v)]
                         if len(v) == 0:
                             continue
+                        # what Y does on ANY day of the same period: the event matters only beyond this
+                        allv = fwd[h][k][msk]
+                        base = float(np.nanmean(allv)) if np.isfinite(allv).any() else 0.0
+                        base_win = (
+                            float((allv[np.isfinite(allv)] > 0).mean())
+                            if np.isfinite(allv).any()
+                            else 0.0
+                        )
                         res.append(
                             {
                                 "from": x,
@@ -437,6 +446,9 @@ def rotation(
                                 "n": len(v),
                                 "mean": float(v.mean()),
                                 "win": float((v > 0).mean()),
+                                "base": base,
+                                "base_win": base_win,
+                                "excess": float(v.mean()) - base,
                             }
                         )
         out["events"][kind] = res
