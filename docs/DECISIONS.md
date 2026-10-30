@@ -143,3 +143,10 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 
 - Owner: do not search for one golden pattern. Keep several patterns, know where each works and fails (edge cases), let them complement each other, and improve them from live paper-trading results. When a pattern stops working, analyse why (regime? combinable with another? useless?) instead of simply dropping it.
 - Operating rules are in `docs/PATTERN_BOOK.md`: 10-20 patterns in paper trading at once, sized by confidence; the market state at entry is stored with every trade; weekly review compares losing vs winning trades and proposes changes, which are back-checked and applied only with owner approval.
+
+## ADR-0018 | 2026-10-30 | accepted | Validation v3: textbook setups in market context, all available data
+
+- The brute-force search (200k+ combinations, all regimes averaged) and the portfolio built from broad conditions did not beat buying the S&P 500 (2010-2024 CAGR ~0-3%, drawdowns ~40%).
+- Owner: no need to discover anything new; use the textbook (candlesticks, chart patterns, stage analysis, MA/MACD/RSI) and find which known setups work in which market context; context matters; using hindsight is forbidden.
+- New plan in `docs/VALIDATION_PLAN_V3.md`: market phase -> sector -> Weinstein stage -> stock quality (fundamentals) -> textbook setup, rules written before testing, buy-stop entries, textbook stops/targets, comparison with random entries, walk-forward, Monte Carlo, visual checks of pattern detection with the owner.
+- Data: use everything available, add fundamentals (SEC XBRL), 13F, event calendars, NAAIM, Wikipedia pageviews, 1-hour bars; weekly and monthly views. Delisted stocks are not purchased (known survivorship limitation).
