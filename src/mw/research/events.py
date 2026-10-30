@@ -106,7 +106,8 @@ class Study:
 
     def __init__(self, parts: list[Path], day: pl.DataFrame, universe: str = "all",
                  window: tuple[date, date] = (date(2022, 1, 1), date(2024, 12, 31)), test_start: date | None = date(2025, 1, 1),
-                 starts: dict[str, Any] | None = None, horizons: list[int] | None = None, log: Any = print) -> None:  # fmt: skip
+                 starts: dict[str, Any] | None = None, horizons: list[int] | None = None, log: Any = print,
+                 outcomes: bool = True) -> None:  # fmt: skip
         self.universe = universe
         scan = pl.scan_parquet([str(p) for p in parts])
         if universe == "sp500":
@@ -123,7 +124,10 @@ class Study:
         self.date_rank = (np.searchsorted(self.udates, d.to_numpy()) + 1).astype(np.int32)
         self.tier = base["vol_tier"].to_numpy()
         self.cost = cost_of(base["raw_close"].to_numpy())
-        self.ent_codes = base["entity_id"].cast(pl.Categorical).to_physical().to_numpy()
+        self.entity = base["entity_id"].cast(
+            pl.Categorical
+        )  # for listing events (trade simulation)
+        self.dates = base["as_of"]
         del base
         self.win = window
         self.win_lo = _first_rank(self.udates, window[0])
@@ -221,7 +225,12 @@ class Study:
                 self.start_rank[f"{c}__{k}"] = first
         self.mbin_cols = list(self.day_cond)
         log(f"    市場全体の条件 {len(self.mbin_cols)} 種類")
-        # ---- outcomes
+        # ---- outcomes (skipped when only the events are needed, e.g. the trade simulation)
+        self._base: dict[tuple[str, int, str], float | None] = {}
+        if not outcomes:
+            self.horizons, self.rh, self.m, self.r = [], [], {}, {}
+            log(f"    条件だけを読み込み（{self.n:,} 行）")
+            return
         hz = horizons or HORIZONS
         self.horizons = hz
         xk = "xsp" if universe == "sp500" else "xret"
@@ -292,6 +301,18 @@ class Study:
         if not any(not c.startswith("!") for c in conds):
             return np.zeros(self.n, dtype=bool)
         return self.onset(self.state(conds), self.prev_state(conds), self.start_of(conds))
+
+    def events_frame(self, conds: tuple[str, ...]) -> pl.DataFrame:
+        """Onset events as rows (entity_id, as_of)."""
+        idx = np.flatnonzero(self.events(conds))
+        return pl.DataFrame(
+            {"entity_id": self.entity.gather(idx).cast(pl.String), "as_of": self.dates.gather(idx)}
+        )
+
+    def state_by_date(self, name: str) -> dict[Any, bool]:
+        """A market-wide condition's state per session date (for timing overlays)."""
+        arr = self.day_cond[name]
+        return {np.datetime64(d, "D"): bool(arr[i + 1]) for i, d in enumerate(self.udates)}
 
     # ---- statistics
     def stats(self, idx: np.ndarray, h: int) -> dict[str, Any]:
