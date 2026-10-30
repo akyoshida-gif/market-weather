@@ -1,0 +1,39 @@
+# Pattern library v1 (candidates from the event study run 20261030T0447).
+# Each stock pattern is simulated with every exit rule; the best rule is chosen on 2022-2024
+# and checked on 2025-. Timing patterns are market-wide (they pick days, not stocks).
+# conds use the event-study condition names; "!x" = NOT x.
+stock:
+  - {key: P01, name: "高ボラの急落からの反発（業種も弱い）", type: rebound, universe: all,
+     conds: ["!m_QQQ_dev200__hi20", "!m_T10Y2Y_chg60__lo20", "f_atr_pct__hi10", "f_ichi_cloud__lo20", "f_ind_rs63__lo10", "f_rs_ind63__lo10"]}
+  - {key: P02, name: "高ボラ×業種の中で強い×天然ガス安", type: momentum, universe: all,
+     conds: ["!f_ichi_cloud__lo20", "!m_QQQ_dev200__hi20", "!m_T10Y2Y_chg60__lo20", "f_atr_pct__hi10", "f_rs_ind63__hi20", "m_DHHNGSP_pos__lo20"]}
+  - {key: P03, name: "1年の騰落率が上位20%", type: momentum, universe: all, conds: ["f_ret252__hi20"]}
+  - {key: P04, name: "1年の騰落率が上位10%", type: momentum, universe: all, conds: ["f_ret252__hi10"]}
+  - {key: P05, name: "所属セクターの強さが上位", type: momentum, universe: all, conds: ["f_sec_rank__hi10"]}
+  - {key: P06, name: "直近10日の押しが深い（フラッグ）", type: pullback, universe: all, conds: ["f_flag_depth__hi20"]}
+  - {key: P07, name: "業種の中で強い（3か月）", type: momentum, universe: all, conds: ["f_rs_ind63__hi20"]}
+  - {key: P08, name: "セクターの中で強い（20日）", type: momentum, universe: all, conds: ["f_rs_sec20__hi10"]}
+  - {key: P09, name: "S&P500より強い（6か月）", type: momentum, universe: all, conds: ["f_rs_spy126__hi20"]}
+  - {key: P10, name: "52週安値から大きく上", type: momentum, universe: all, conds: ["f_dist_lo__hi20"]}
+  - {key: P11, name: "高ボラ×52週安値から大きく上", type: momentum, universe: all,
+     conds: ["!c_cap_micro", "!f_sec_rs63__lo10", "!m_COT_VX_ASSET_MGR_pos__lo20", "!m_DFF_chg60__dn", "f_atr_pct__hi10", "f_dist_lo__hi20"]}
+  - {key: P12, name: "高ボラ×強いセクター", type: momentum, universe: all,
+     conds: ["!f_atr_pct__hi10", "!f_ind_rs63__hi10", "!f_rank_dvol__lo20", "!m_DFF_chg60__lo20", "f_atr_pct__hi20", "f_sec_rank__hi20"]}
+  - {key: P13, name: "高ボラ×業種強×1年強×セクター強", type: momentum, universe: all,
+     conds: ["f_atr_pct__hi20", "f_ind_rs63__hi10", "f_ret252__hi20", "f_sec_rank__hi20"]}
+  - {key: P14, name: "空売り残高が多い×値幅の広いベース", type: squeeze, universe: all,
+     conds: ["!f_dtc__lo10", "!f_sec_rank__hi20", "!m_MARGIN_YOY_lvl__hi20", "!m_rs_XLRE_63__hi20", "f_base_width__hi10", "f_si_pct__hi20"]}
+  - {key: P15, name: "空売り比率が低い", type: flow, universe: sp500, conds: ["f_svr5__lo10"]}
+  - {key: P16, name: "窓を開けて上昇", type: breakout, universe: sp500, conds: ["f_gap__hi10"]}
+  - {key: P17, name: "52週安値から大きく上×カバー日数が少ない", type: momentum, universe: sp500,
+     conds: ["f_dist_lo__hi10", "f_dtc__lo20", "m_COT_JY_DEALER_chg60__dn"]}
+  - {key: P18, name: "200日線から大きく上", type: momentum, universe: all, conds: ["f_dev_ma200__hi20"]}
+  - {key: P19, name: "3か月の順位が上位×200日線が上向き", type: momentum, universe: all,
+     conds: ["!f_atr_pct__hi10", "!f_sec_corr__lo10", "!f_sec_rs63__hi20", "!m_T10Y2Y_chg60__lo20", "f_rank_ret63__hi20", "f_slope_ma200__hi20"]}
+  - {key: P20, name: "急落の翌日（当日の騰落率が下位10%）", type: rebound, universe: sp500, conds: ["f_ret1__lo10"]}
+timing:
+  - {key: T1, name: "天然ガスが60日で大きく下落", conds: ["m_DHHNGSP_chg60__lo20"]}
+  - {key: T2, name: "通信（XLC）がS&P500に対して弱くなってきた", conds: ["m_rs_XLC_63__dn"]}
+  - {key: T3, name: "銅÷金が20日で大きく下落", conds: ["m_CU_AU_chg20__lo20"]}
+  - {key: T4, name: "個別株のプット・コール比率が60日で上昇", conds: ["m_PC_EQUITY_chg60__hi20"]}
+  - {key: T5, name: "SKEW指数が高い", conds: ["m_SKEW_lvl__hi20"]}

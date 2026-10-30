@@ -1,0 +1,39 @@
+# Method B / C: exit rules per pattern and the pattern library as a portfolio. Manual only.
+# Uses the working data (artifact "es-data") of an event_study run. Results go to R2 research/tradesim/<run>/.
+name: tradesim
+on:
+  workflow_dispatch:
+    inputs:
+      data_run:
+        description: "event_study run id whose working data to use (artifacts are kept 3 days)"
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: tradesim
+  cancel-in-progress: false
+jobs:
+  sim:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - run: sudo mkdir -p /mnt/es && sudo chown "$USER" /mnt/es
+      - uses: actions/download-artifact@v8
+        with:
+          name: es-data
+          path: /mnt/es
+          run-id: ${{ inputs.data_run }}
+          github-token: ${{ github.token }}
+      - name: Simulate
+        env:
+          MW_STORAGE_BACKEND: r2
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: uv run python -m jobs.tradesim --data-dir /mnt/es
