@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       sources:
-        description: "sp500,ftd,insider,shares,margin,cftc,pcr,sic"
+        description: "sp500,ftd,insider,shares,margin,cftc,pcr,sic,fundamentals,13f,calendar,wiki"
         required: false
-        default: "sp500,ftd,insider,shares,margin,cftc,pcr"
+        default: "sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals,13f,calendar,wiki"
       backfill:
         description: "fetch full history (true/false)"
         required: false
@@ -28,6 +28,7 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.2
@@ -40,7 +41,7 @@ jobs:
           IN_SOURCES: ${{ inputs.sources }}
           IN_BACKFILL: ${{ inputs.backfill }}
         run: |
-          ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares,margin,cftc,pcr}"
+          ARGS="--sources ${IN_SOURCES:-sp500,ftd,insider,shares,margin,cftc,pcr,fundamentals,13f,calendar,wiki}"
           [ "$IN_BACKFILL" = "true" ] && ARGS="$ARGS --backfill"
           echo "args: $ARGS"
           uv run python -m jobs.reference_data $ARGS
