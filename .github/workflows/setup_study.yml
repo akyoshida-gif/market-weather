@@ -1,0 +1,27 @@
+# Setup validation (VALIDATION_PLAN_V3): textbook setups x market phase x stage. Manual only.
+# Results go to R2 research/setups/<run>/; the log shows progress only.
+name: setup_study
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: setup_study
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: Run
+        env:
+          MW_STORAGE_BACKEND: r2
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: uv run python -m jobs.setup_study --out-dir /tmp/setups
