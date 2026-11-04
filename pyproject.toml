@@ -56,7 +56,7 @@ strict = true
 
 [[tool.mypy.overrides]]
 # report/UI glue over polars results; covered by build smoke tests instead of strict typing
-module = ["mw.report.*", "mw.strategy.*", "mw.research.*", "jobs.build_dashboard", "jobs.tradesim"]
+module = ["mw.report.*", "mw.strategy.*", "mw.research.*", "jobs.build_dashboard", "jobs.tradesim", "jobs.setup_study"]
 ignore_errors = true
 
 [tool.pytest.ini_options]
@@ -70,9 +70,14 @@ pythonpath = ["src", "."]
 "jobs/build_dashboard.py" = ["E501"]
 "jobs/reference_data.py" = ["E501"]
 "src/mw/ingest/us/market_extra.py" = ["E501", "E731"]
+"src/mw/ingest/us/fundamentals.py" = ["E501"]
+"src/mw/ingest/us/holdings_13f.py" = ["E501"]
+"src/mw/ingest/us/wiki_views.py" = ["E501"]
+"src/mw/ingest/macro/calendar.py" = ["E501"]
 "src/mw/ingest/us/sec_reference.py" = ["E501"]
 "tests/*" = ["E501"]
 "src/mw/research/*" = ["E501", "E731"]
 "jobs/event_study.py" = ["E501"]
 "jobs/tradesim.py" = ["E501"]
+"jobs/setup_study.py" = ["E501"]
 "jobs/storage_maintenance.py" = ["E501"]
