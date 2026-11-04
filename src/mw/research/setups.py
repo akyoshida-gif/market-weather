@@ -225,6 +225,14 @@ def detect(df: pl.DataFrame) -> list[Armed]:
     if n < 260:
         return out
     up_trend = (c > ma[50]) & (ma[50] > ma[200]) & np.isfinite(ma[200])
+    hh252, ll252 = df["hh252"].to_numpy().astype(float), df["ll252"].to_numpy().astype(float)
+    ma200_20 = np.r_[np.full(20, np.nan), ma[200][:-20]]
+    tt = ((c > ma[150]) & (c > ma[200]) & (ma[150] > ma[200]) & (ma[200] > ma200_20) & (ma[50] > ma[150])
+          & (c > ma[50]) & (c >= 1.3 * ll252) & (c >= 0.75 * hh252))  # fmt: skip
+    pvL = pivots(
+        h, lo, atr, k_atr=3.0, pct=0.07
+    )  # pattern-scale swings (chart patterns span weeks)
+    confL = np.searchsorted(pvL.confirmed, np.arange(n), side="right")
     # pivots known at each bar: positions in the pivot list confirmed up to t
     conf_pos = np.searchsorted(pv.confirmed, np.arange(n), side="right")
     last_flat = -999
@@ -241,7 +249,7 @@ def detect(df: pl.DataFrame) -> list[Armed]:
             continue
         k = conf_pos[t]  # pivots[0:k] are known at t
         # ---- flat base: 25-65 bars, range <= 15% of the top, prior advance into it, price near the top
-        if up_trend[t] and t - last_flat > 10:
+        if up_trend[t] and t - last_flat > 20:
             for L in (65, 45, 25):
                 top = h[t - L + 1 : t + 1].max()
                 bot = lo[t - L + 1 : t + 1].min()
@@ -259,123 +267,108 @@ def detect(df: pl.DataFrame) -> list[Armed]:
                             top * 1.001,
                             max(bot, top * 0.92),
                             top + (top - bot),
+                            valid=20,
                             info={"len": L},
                         )
                     )
                     last_flat = t
                     break
-        if k >= 3:
-            ps, pp, pk = pv.idx[:k], pv.price[:k], pv.kind[:k]
-            # ---- cup with handle: high H0, low L (12-35% below), high H1 >= 0.95*H0, then handle low in upper half
-            if pk[-1] == -1 and k >= 4 and pk[-2] == 1 and pk[-3] == -1 and pk[-4] == 1:
-                h0, lcup, h1, hl = pp[-4], pp[-3], pp[-2], pp[-1]
-                depth = 1 - lcup / h0
-                handle = 1 - hl / h1
-                if (0.12 <= depth <= 0.35 and h1 >= 0.95 * h0 and ps[-2] - ps[-4] >= 30 and 0.03 <= handle <= 0.15
-                        and hl > (h0 + lcup) / 2 and t - ps[-1] <= 15 and c[t] < h1 and up_trend[t]):  # fmt: skip
-                    arm(
-                        Armed(
-                            "cup_handle",
-                            t,
-                            h1 * 1.001,
-                            hl * 0.995,
-                            h1 + (h0 - lcup),
-                            valid=15,
-                            info={
-                                "h0": int(ps[-4]),
-                                "low": int(ps[-3]),
-                                "h1": int(ps[-2]),
-                                "hl": int(ps[-1]),
-                            },
-                        ),
-                        ("cup", int(ps[-2])),
-                    )
-            # ---- VCP: last three pullbacks (high->low) each shallower; last <= 10%; volume drying up
-            if k >= 6 and pk[-1] == -1:
-                pulls = []
-                for j in (-5, -3, -1):
-                    if pk[j - 1] == 1 and pk[j] == -1:
-                        pulls.append(1 - pp[j] / pp[j - 1])
-                if (len(pulls) == 3 and pulls[0] > pulls[1] > pulls[2] and pulls[2] <= 0.10 and up_trend[t]
-                        and np.nanmean(v[t - 9 : t + 1]) < vol50[t] and c[t] < pp[-2] and t - ps[-1] <= 15):  # fmt: skip
-                    arm(
-                        Armed(
-                            "vcp",
-                            t,
-                            pp[-2] * 1.001,
-                            pp[-1] * 0.995,
-                            pp[-2] * 1.2,
-                            valid=15,
-                            info={"pulls": [round(x, 3) for x in pulls], "h": int(ps[-2])},
-                        ),
-                        ("vcp", int(ps[-2])),
-                    )
-            # ---- inverse head & shoulders: L1 H1 L2(head) H2 L3, after a decline, shoulders similar
-            if (
-                k >= 5
-                and pk[-1] == -1
-                and pk[-2] == 1
-                and pk[-3] == -1
-                and pk[-4] == 1
-                and pk[-5] == -1
-            ):
-                l1, h1_, l2, h2_, l3 = pp[-5], pp[-4], pp[-3], pp[-2], pp[-1]
-                if (
-                    l2 < l1
-                    and l2 < l3
-                    and abs(l1 - l3) <= 0.5 * (min(h1_, h2_) - l2)
-                    and ps[-5] >= 60
-                ):
-                    prior_drop = (
-                        c[ps[-5] - 60] > l1 * 1.15
-                    )  # a real decline before the left shoulder
-                    slope = (h2_ - h1_) / max(ps[-2] - ps[-4], 1)
-                    neck_t = h2_ + slope * (t + 1 - ps[-2])
-                    if prior_drop and c[t] < neck_t and t - ps[-1] <= 20 and neck_t > l3:
+        kL = confL[t]
+        # ---- cup with handle (O'Neil): a prior advance of 30%+ into a high H0 near the 52-week high, a
+        #      U-shaped cup 12-40% deep lasting 7+ weeks, a right side back near H0, then a 1-6 week handle
+        #      in the upper half of the cup that pulls back 3-12% (and less than half the cup).
+        if kL >= 2 and up_trend[t] and pvL.kind[kL - 1] == -1 and pvL.kind[kL - 2] == 1:
+            i0, h0, ic, lcup = (
+                pvL.idx[kL - 2],
+                pvL.price[kL - 2],
+                pvL.idx[kL - 1],
+                pvL.price[kL - 1],
+            )
+            i1 = ic + int(np.argmax(h[ic : t + 1]))
+            h1 = h[i1]
+            ihl = i1 + int(np.argmin(lo[i1 : t + 1]))
+            hl = lo[ihl]
+            depth = 1 - lcup / h0
+            prior = h0 / lo[max(0, i0 - 250) : i0 + 1].min() - 1
+            bottom = (
+                c[i0 : i1 + 1] <= lcup + (h0 - lcup) / 3
+            ).mean()  # time near the bottom: U, not V
+            if (0.12 <= depth <= 0.40 and prior >= 0.30 and h0 >= 0.9 * hh252[i0] and 35 <= i1 - i0 <= 250
+                    and 0.92 * h0 <= h1 <= 1.05 * h0 and 5 <= t - i1 <= 30
+                    and 0.03 <= 1 - hl / h1 <= min(0.12, depth / 2) and hl > (h0 + lcup) / 2
+                    and bottom >= 0.2 and hl < c[t] < h1):  # fmt: skip
+                arm(
+                    Armed("cup_handle", t, h1 * 1.001, hl * 0.995, h1 + (h0 - lcup), valid=10,
+                          info={"h0": int(i0), "low": int(ic), "h1": int(i1), "hl": int(ihl)}),
+                    ("cup", int(i0), int(i1)),
+                )  # fmt: skip
+        # ---- VCP (Minervini): in a stage-2 trend template, a base from the highest high of up to 200
+        #      bars; 2+ pullbacks inside it, each clearly shallower (<= 80%) than the one before, with
+        #      higher lows, the first 8-40% and the last <= 10%, volume drying up. Pivot = last high.
+        if tt[t]:
+            w0 = max(0, t - 200)
+            i0 = w0 + int(np.argmax(h[w0 : t + 1]))
+            if t - i0 >= 20 and h[i0] >= 0.95 * hh252[t]:
+                sel = [j for j in range(k) if pv.idx[j] >= i0]
+                if sel and pv.kind[sel[0]] == 1 and pv.kind[sel[-1]] == -1:
+                    hi_p = [pv.price[j] for j in sel if pv.kind[j] == 1]
+                    lo_p = [pv.price[j] for j in sel if pv.kind[j] == -1]
+                    pulls = [1 - b / a for a, b in zip(hi_p, lo_p, strict=False)]
+                    ok = (len(pulls) >= 2 and 0.08 <= pulls[0] <= 0.40 and pulls[-1] <= 0.10
+                          and all(b <= 0.8 * a for a, b in zip(pulls, pulls[1:], strict=False))
+                          and all(b > a for a, b in zip(lo_p, lo_p[1:], strict=False)))  # fmt: skip
+                    last_h, last_l = sel[-2], sel[-1]
+                    if (ok and np.nanmean(v[t - 9 : t + 1]) < vol50[t] and c[t] < pv.price[last_h]
+                            and t - pv.idx[last_l] <= 15):  # fmt: skip
                         arm(
-                            Armed(
-                                "inv_hs",
-                                t,
-                                neck_t * 1.001,
-                                l3 * 0.995,
-                                neck_t + (neck_t - l2),
-                                valid=20,
-                                info={
-                                    "l1": int(ps[-5]),
-                                    "head": int(ps[-3]),
-                                    "l3": int(ps[-1]),
-                                    "h1": int(ps[-4]),
-                                    "h2": int(ps[-2]),
-                                },
-                            ),
-                            ("ihs", int(ps[-3])),
-                        )
-            # ---- double bottom: L1 H L2 with L2 within 3% of L1, >= 15 bars apart, after a decline
-            if k >= 3 and pk[-1] == -1 and pk[-2] == 1 and pk[-3] == -1:
-                l1, mid, l2 = pp[-3], pp[-2], pp[-1]
-                if (
-                    abs(l2 / l1 - 1) <= 0.03
-                    and ps[-1] - ps[-3] >= 15
-                    and mid >= 1.08 * l1
-                    and ps[-3] >= 60
-                    and c[ps[-3] - 60] > l1 * 1.15
-                    and c[t] < mid
-                    and t - ps[-1] <= 20
-                ):
+                            Armed("vcp", t, pv.price[last_h] * 1.001, pv.price[last_l] * 0.995, None, valid=15,
+                                  info={"pulls": [round(x, 3) for x in pulls], "h": [int(pv.idx[j]) for j in sel if pv.kind[j] == 1],
+                                        "l": [int(pv.idx[j]) for j in sel if pv.kind[j] == -1]}),
+                            ("vcp", int(i0), int(pv.idx[last_h])),
+                        )  # fmt: skip
+        if kL >= 5:
+            ps, pp, pk = pvL.idx[:kL], pvL.price[:kL], pvL.kind[:kL]
+            # ---- inverse head & shoulders: after a 20%+ decline, three lows on the pattern scale; the head is
+            #      the 52-week low, 3%+ below both shoulders; shoulders similar, halves of similar length,
+            #      4-50 weeks wide, 10%+ high; the neckline (through the two highs) not steep.
+            if list(pk[-5:]) == [-1, 1, -1, 1, -1]:
+                l1, h1_, l2, h2_, l3 = pp[-5:]
+                i_l1, i_h1, i_l2, i_h2, i_l3 = (int(x) for x in ps[-5:])
+                neck_h = (h1_ + h2_) / 2
+                height = neck_h - l2
+                left, right = i_l2 - i_l1, i_l3 - i_l2
+                prior_hi = h[max(0, i_l1 - 150) : i_l1 + 1].max()
+                slope = (h2_ - h1_) / max(i_h2 - i_h1, 1)
+                neck_t = h2_ + slope * (t + 1 - i_h2)
+                if (l2 < 0.97 * min(l1, l3) and abs(l1 - l3) <= 0.5 * height and height / neck_h >= 0.10
+                        and 20 <= i_l3 - i_l1 <= 250 and 1 / 3 <= left / max(right, 1) <= 3 and abs(h2_ / h1_ - 1) <= 0.10
+                        and prior_hi >= 1.25 * l2 and l2 <= 1.02 * ll252[i_l2] and t - i_l3 <= 25
+                        and l3 < c[t] < neck_t):  # fmt: skip
                     arm(
-                        Armed(
-                            "double_bottom",
-                            t,
-                            mid * 1.001,
-                            min(l1, l2) * 0.995,
-                            mid + (mid - min(l1, l2)),
-                            valid=20,
-                            info={"l1": int(ps[-3]), "l2": int(ps[-1]), "mid": int(ps[-2])},
-                        ),
-                        ("db", int(ps[-3]), int(ps[-1])),
-                    )
+                        Armed("inv_hs", t, neck_t * 1.001, l3 * 0.995, neck_t + (neck_t - l2), valid=20,
+                              info={"l1": i_l1, "head": i_l2, "l3": i_l3, "h1": i_h1, "h2": i_h2}),
+                        ("ihs", i_l2),
+                    )  # fmt: skip
+        if kL >= 3:
+            ps, pp, pk = pvL.idx[:kL], pvL.price[:kL], pvL.kind[:kL]
+            # ---- double bottom: after a 20%+ decline, two lows on the pattern scale within 4%, 3-30 weeks
+            #      apart, near the 52-week low, with a 10%+ rally between them. Pivot = the middle high.
+            if list(pk[-3:]) == [-1, 1, -1]:
+                l1, mid, l2 = pp[-3:]
+                i1, im, i2 = (int(x) for x in ps[-3:])
+                base = min(l1, l2)
+                if (abs(l2 / l1 - 1) <= 0.04 and 15 <= i2 - i1 <= 150 and mid >= 1.10 * base
+                        and h[max(0, i1 - 150) : i1 + 1].max() >= 1.25 * l1 and base <= 1.03 * ll252[i2]
+                        and t - i2 <= 25 and l2 < c[t] < mid):  # fmt: skip
+                    arm(
+                        Armed("double_bottom", t, mid * 1.001, base * 0.995, mid + (mid - base), valid=20,
+                              info={"l1": i1, "l2": i2, "mid": im}),
+                        ("db", i1, i2),
+                    )  # fmt: skip
+        if k >= 4:
+            ps, pp, pk = pv.idx[:k], pv.price[:k], pv.kind[:k]
             # ---- ascending triangle: two highs within 2% (flat top), two rising lows after them
-            if k >= 4 and pk[-1] == -1 and pk[-2] == 1 and pk[-3] == -1 and pk[-4] == 1:
+            if pk[-1] == -1 and pk[-2] == 1 and pk[-3] == -1 and pk[-4] == 1:
                 ha, la, hb, lb = pp[-4], pp[-3], pp[-2], pp[-1]
                 if (
                     abs(hb / ha - 1) <= 0.02
@@ -445,30 +438,34 @@ def detect(df: pl.DataFrame) -> list[Armed]:
         # ---- reversal candle at support after a decline (morning star / hammer / engulfing)
         star = (c[t - 2] < o[t - 2] and body[t - 1] <= 0.3 * max(rng[t - 1], 1e-9) and c[t] > o[t]
                 and c[t] > (o[t - 2] + c[t - 2]) / 2)  # fmt: skip
-        if (hammer or engulf or star) and c[t - 10] > c[t] * 1.08:
-            near200 = abs(lo[t] / ma[200][t] - 1) <= 0.02 if np.isfinite(ma[200][t]) else False
-            near_low = k >= 1 and any(
-                pv.kind[:k][j] == -1
-                and abs(lo[t] / pv.price[:k][j] - 1) <= 0.02
-                and t - pv.idx[:k][j] > 20
-                for j in range(max(0, k - 6), k)
-            )
-            if near200 or near_low:
+        if (
+            (hammer or engulf or star)
+            and c[t - 10] > c[t] * 1.08
+            and h[max(0, t - 60) : t].max() >= 1.15 * c[t]
+        ):
+            # support = the 200-day line, or a major (pattern-scale) low 20-250 bars old that price tests
+            # from above (low within 2% of it, close above it)
+            sup, at = None, ""
+            if (
+                np.isfinite(ma[200][t])
+                and abs(lo[t] / ma[200][t] - 1) <= 0.02
+                and c[t] > ma[200][t]
+            ):
+                sup, at = ma[200][t], "200日線"
+            else:
+                for j in range(kL - 1, -1, -1):
+                    if t - pvL.idx[j] > 250:
+                        break
+                    if (pvL.kind[j] == -1 and t - pvL.idx[j] > 20 and abs(lo[t] / pvL.price[j] - 1) <= 0.02
+                            and c[t] > pvL.price[j]):  # fmt: skip
+                        sup, at = pvL.price[j], "前の大きな安値"
+                        break
+            if sup is not None:
                 lo3 = lo[t - 2 : t + 1].min()
                 out.append(
-                    Armed(
-                        "support_reversal",
-                        t,
-                        h[t] * 1.001,
-                        lo3 - 0.1 * atr[t],
-                        None,
-                        valid=3,
-                        info={
-                            "kind": "star" if star else ("hammer" if hammer else "engulf"),
-                            "at": "200日線" if near200 else "前の安値",
-                        },
-                    )
-                )
+                    Armed("support_reversal", t, h[t] * 1.001, lo3 - 0.1 * atr[t], None, valid=3,
+                          info={"kind": "star" if star else ("hammer" if hammer else "engulf"), "at": at, "sup": round(float(sup), 4)})
+                )  # fmt: skip
     return out
 
 

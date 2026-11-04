@@ -1,4 +1,5 @@
 import numpy as np
+import polars as pl
 
 from mw.research import setup_sim, setups
 from mw.research.setups import Armed
@@ -56,3 +57,36 @@ def test_manage_stop_and_target() -> None:
     h[5] = 111.0  # reaches the target 110 -> +2R
     r, held, why = setup_sim.manage("target", 0, 100.0, 95.0, 110.0, o, h, lo, c, ma, ma)
     assert r == 2.0 and why == "利確"
+
+
+def _frame(close: np.ndarray) -> pl.DataFrame:
+
+    n = len(close)
+    d = pl.date_range(
+        pl.date(2015, 1, 1), pl.date(2015, 1, 1) + pl.duration(days=n - 1), eager=True
+    )
+    return setups.daily_indicators(
+        pl.DataFrame(
+            {
+                "entity_id": ["US:X"] * n,
+                "as_of": d,
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": np.full(n, 1e6),
+            }
+        )  # fmt: skip
+    )
+
+
+def test_double_bottom_is_found_on_the_pattern_scale_only() -> None:
+    # 300 flat bars at 100, decline to 60, rally to 70, back to 60.5, then up to 66 (below the middle high)
+    seg = [np.full(300, 100.0), np.linspace(100, 60, 40), np.linspace(60, 70, 20), np.linspace(70, 60.5, 20),
+           np.linspace(60.5, 66, 12)]  # fmt: skip
+    g = _frame(np.concatenate(seg))
+    found = [a for a in setups.detect(g) if a.setup == "double_bottom"]
+    assert found and abs(found[0].level / (70 * 1.01) - 1) < 0.01
+    # the same shape scaled down to 3% swings is noise, not a double bottom
+    small = 100 - (100 - np.concatenate(seg)) * 0.08
+    assert not [a for a in setups.detect(_frame(small)) if a.setup == "double_bottom"]
