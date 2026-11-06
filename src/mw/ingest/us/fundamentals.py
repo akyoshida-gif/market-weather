@@ -63,8 +63,7 @@ def parse_companyfacts(data: bytes) -> pl.DataFrame:
               "end": pl.String, "val": pl.Float64, "form": pl.String, "fy": pl.Int32, "fp": pl.String,
               "filed": pl.String, "accn": pl.String}  # fmt: skip
     df = pl.DataFrame(rows, schema=schema)
-    if df.height == 0:
-        return df
+    # dates are parsed even when there are no rows, so that later steps see the same types
     return df.with_columns(
         pl.col("start").str.to_date(strict=False),
         pl.col("end").str.to_date(strict=False),
