@@ -232,6 +232,19 @@ def complete_sessions(ann: pl.DataFrame, lookback: int = 10) -> set[date]:
     return out
 
 
+VIX_WAIT_SESSIONS = 3  # wait at most this many recent sessions for a missing VIX close
+
+
+def missing_vix(ann: pl.DataFrame) -> set[date]:
+    """Recent sessions whose VIX close has not arrived yet (Cboe publishes it hours after the stock prices).
+    Only the last VIX_WAIT_SESSIONS sessions wait, so a day Cboe never publishes cannot block trading."""
+    if "vix" not in ann.columns:
+        return set()
+    days = ann.group_by("as_of").agg(pl.col("vix").drop_nulls().len().alias("n")).sort("as_of")
+    recent = days.tail(VIX_WAIT_SESSIONS)
+    return set(recent.filter(pl.col("n") == 0)["as_of"].to_list())
+
+
 def run(
     storage: GuardedStorage, market: str, strategies: dict[str, engine.Strategy], ind: pl.DataFrame,
     start: date | None = None,
@@ -243,7 +256,7 @@ def run(
     todo = [d for d in sessions if (last is None or d > last) and (start is None or d >= start)]
     # a session whose prices are still arriving (Yahoo fills the latest day over several hours) must not be
     # processed: it would be marked done with most stocks missing and its signals would be lost for good
-    complete = complete_sessions(ann)
+    complete = complete_sessions(ann) - (missing_vix(ann) if market == "US" else set())
     waiting = next((d for d in todo if d not in complete), None)
     if waiting is not None:
         todo = [d for d in todo if d < waiting]

@@ -124,4 +124,4 @@ def test_cboe_ingest_twice_same_day(tmp_path, monkeypatch):
     s = GuardedStorage(LocalFS(tmp_path), GuardSettings())
     cb.ingest(s, Http(), since_days=None)
     cb.ingest(s, Http(), since_days=None)
-    assert len(s.list("raw/vol_indices/")) == 12
+    assert len(s.list("raw/vol_indices/")) == 2 * len(cb.SYMBOLS)

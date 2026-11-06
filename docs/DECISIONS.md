@@ -157,3 +157,10 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 - Owner (2026-10-30): (A) delete superseded research results (they can be regenerated); (B) for large datasets the source keeps publishing permanently (SEC insider data sets, XBRL, 13F), keep only the processed silver data plus a manifest (`raw_manifest/<source>.parquet`: raw_key, URL, sha256, bytes) instead of the raw copy, and retire the existing insider raw copies. If this is not enough, accept paid R2 beyond 10 GB (option C).
 - Safety: `GuardedStorage.delete` never deletes `ledger/`; `raw/` only with `retire_raw=True`, used after the manifest is written. Maintenance runs as a manual workflow with a dry run by default (`jobs/storage_maintenance.py`).
 - This relaxes the "raw is always kept" principle only for source-hosted bulk files; everything else keeps raw copies as before.
+
+## ADR-0020 | 2026-11-06 | accepted | Panic rebound: ten variants in paper trading; S&P 500 history from 1975
+
+- Finding (docs/PANIC_STUDY.md): after VIX panics the market tends to rebound; the effect starts at VIX 30 (S&P 500 since 1990), high-beta stocks that were strong before the panic rebound most (2010-2026). With stops and the demo book's top-10 rule the results depend on a few large rebounds and lose in bear markets (2011, 2021-22). Nothing is proven, so ten variants (entry day, threshold, stock pick, stop, trend filter) run side by side in paper trading as candidates.
+- Owner (2026-11-06): do not fixate on one method; run many patterns in the demo; show today's buy candidates on the dashboard; keep a list of everything not yet done (`docs/BACKLOG.md`).
+- Indicators gain `beta252`, `pre_str` and their cross-sectional percentiles; the US regime gains the panic state (`vix_prev`, `vix_term_prev`, `vix_max30`, `spy_trend_pre`). Panic strategies are kept out of `library.grid` (they need regime columns) and resolved by `by_key`. Only the first day of a panic triggers (VIX swings around the level).
+- Cboe `SPX` (close only, since 1975) is added to `vol_indices` for long-history market studies.
