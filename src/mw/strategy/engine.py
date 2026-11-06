@@ -137,6 +137,7 @@ def indicators(df: pl.DataFrame, bench: str) -> pl.DataFrame:
         (pl.col("close") > pl.col("ma50")).alias("mkt_up50"),
         (pl.col("close") > pl.col("ma200")).alias("mkt_up200"),
         pl.col("ret63").alias("mkt_ret63"),
+        pl.col("ret1").alias("mkt_ret1"),
     )
     df = df.join(b, on="as_of", how="left")
     df = (
@@ -153,6 +154,20 @@ def indicators(df: pl.DataFrame, bench: str) -> pl.DataFrame:
             (pl.col("_m") / pl.col("_n")).alias("mom_pct"),
         )
         .drop("_r", "_n", "_m")
+    )
+    # beta to the benchmark (252 sessions) and strength BEFORE the latest month (6 months ending 20
+    # sessions ago: "strong before the panic"), both as cross-sectional percentiles (panic_rebound)
+    df = df.with_columns(
+        (
+            pl.rolling_cov(pl.col("ret1"), pl.col("mkt_ret1"), window_size=252)
+            / pl.col("mkt_ret1").rolling_var(252)
+        )
+        .over(g)
+        .alias("beta252"),
+        (pl.col("close").shift(20) / pl.col("close").shift(146) - 1).over(g).alias("pre_str"),
+    ).with_columns(
+        (pl.col("beta252").rank() / pl.col("beta252").count()).over("as_of").alias("beta_pct"),
+        (pl.col("pre_str").rank() / pl.col("pre_str").count()).over("as_of").alias("pre_pct"),
     )
     return df
 

@@ -110,6 +110,89 @@ def pullback_rs(market: str, rs: float, rr: float) -> Strategy:
     )  # fmt: skip
 
 
+PANIC_TIMING = {
+    "term": ("VIX÷VIX3Mが1を下回った日（恐怖の山を越えた）", lambda: (C("vix_term") < 1) & (C("vix_term_prev") >= 1)),
+    "below": ("VIXが基準を下回った日", None),
+    "cross": ("VIXが基準を超えた日（早めに買う）", None),
+}  # fmt: skip
+PANIC_PICK = {
+    "bs": ("ベータ上位20%×パニック前の半年の強さ上位20%", lambda: (C("beta_pct") >= 0.8) & (C("pre_pct") >= 0.8), lambda: C("beta_pct") + C("pre_pct")),
+    "beta": ("ベータ上位20%", lambda: C("beta_pct") >= 0.8, lambda: C("beta_pct")),
+    "index": ("S&P 500（SPY）そのもの", None, None),
+}  # fmt: skip
+
+
+def panic_rebound(
+    market: str,
+    bench: str,
+    x: float,
+    timing: str,
+    pick: str,
+    hold: int,
+    k: float,
+    trend: bool = False,
+) -> Strategy:
+    """Buy after a VIX panic. Episode: VIX closed above `x` within the last 30 sessions. Entry day by `timing`,
+    stocks by `pick`, stop k*ATR below the close (k=0: only a -40% disaster stop; the size is then capped by
+    the 10%-of-equity rule), no target, sell after `hold` sessions. trend: only panics that hit an uptrend
+    (20 sessions earlier SPY was above a rising 200-day line)."""
+    t_name, t_cond = PANIC_TIMING[timing]
+    if timing == "below":
+        t_cond = lambda: (C("vix") < x) & (C("vix_prev") >= x)  # noqa: E731
+    elif timing == "cross":
+        t_cond = lambda: (C("vix") > x) & (C("vix_prev") <= x)  # noqa: E731
+    p_name, p_cond, p_rank = PANIC_PICK[pick]
+    if pick == "index":
+        p_cond, p_rank = (lambda: C("entity_id") == bench), (lambda: pl.lit(1.0))  # noqa: E731
+        universe = lambda: pl.lit(True)  # noqa: E731
+    else:
+        universe = lambda: liq(market, 10e6) & (C("close") >= 10)  # noqa: E731
+    assert t_cond is not None and p_cond is not None and p_rank is not None
+    tc0, pc, pr = t_cond, p_cond, p_rank
+
+    def tc() -> pl.Expr:
+        """Only the FIRST such day of a panic: the timing condition did not fire in the previous 30 sessions
+        (VIX swings around the level and would otherwise buy again and again in one panic)."""
+        fired = tc0().fill_null(False)
+        before = (
+            fired.cast(pl.Int8)
+            .shift(1)
+            .rolling_max(30, min_samples=1)
+            .over("entity_id")
+            .fill_null(0)
+        )
+        return fired & (before == 0)
+
+    trend_ok = (lambda: C("spy_trend_pre").fill_null(False)) if trend else (lambda: pl.lit(True))  # noqa: E731
+    stop_txt = (
+        f"損切りは {k:g}ATR 下"
+        if k > 0
+        else "損切りは −40%（大事故の備えだけ。1銘柄は資金の10%まで）"
+    )
+    return Strategy(
+        key=f"panic_rebound|x{x:g}|{timing}|{pick}|h{hold}|k{k:g}" + ("|up" if trend else ""), label="パニック後の買い",
+        horizon="中期", side="long",
+        entry=lambda: (C("vix_max30") > x) & tc() & pc() & universe() & trend_ok(),
+        stop=(lambda: C("close") - k * C("atr")) if k > 0 else (lambda: C("close") * 0.6), target=lambda: pl.lit(INF),
+        max_hold=hold, rank=pr, params={"x": x, "timing": timing, "pick": pick, "hold": hold, "k": k, "trend": trend},
+        why=f"VIX が {x:g} を超えるパニックの後は、市場全体が戻りやすい（1990年以降、VIX 30超で60日後の S&P 500 は平均+6%）。"
+        f"買う日：{t_name}。銘柄：{p_name}。{stop_txt}、{hold} 日後に売る。"
+        + ("上昇相場の中の急落だけ（20日前に S&P 500 が上向きの200日線の上）。" if trend else ""),
+    )  # fmt: skip
+
+
+def panic_grid(market: str, bench: str) -> list[Strategy]:
+    """Variants run side by side (owner 2026-11-06: many patterns, compare live). Backtest 2010-2026 in
+    docs/PANIC_STUDY.md: results depend on a few large rebounds; none is proven yet."""
+    if market != "US":
+        return []
+    keys = [(30, "cross", "bs", 60, 3.0, False), (30, "below", "bs", 60, 3.0, False), (30, "term", "bs", 60, 3.0, False),
+            (35, "term", "bs", 60, 3.0, False), (30, "cross", "bs", 60, 0.0, False), (30, "cross", "bs", 60, 3.0, True),
+            (30, "cross", "index", 60, 0.0, False), (30, "term", "index", 60, 0.0, False), (25, "term", "bs", 60, 3.0, False),
+            (35, "cross", "bs", 60, 0.0, True)]  # fmt: skip
+    return [panic_rebound(market, bench, *k) for k in keys]
+
+
 def index_trend(market: str, bench: str) -> Strategy:
     return Strategy(
         key="index_trend", label="指数の長期トレンド", horizon="長期", side="long",
@@ -171,7 +254,9 @@ def by_key(market: str, bench: str, key: str) -> Strategy:
     from mw.strategy import regime
 
     base_key, _, rg = key.partition("|rg:")
-    found = {s.key: s for s in grid(market, bench)}
+    found = {
+        s.key: s for s in grid(market, bench) + panic_grid(market, bench)
+    }  # panic needs regime columns
     if base_key not in found:
         raise KeyError(f"unknown strategy {base_key}")
     s = found[base_key]

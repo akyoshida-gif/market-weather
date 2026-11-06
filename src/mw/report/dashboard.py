@@ -490,3 +490,66 @@ def to_json_bytes(obj: Any) -> bytes:
     buf = io.StringIO()
     json.dump(obj, buf, ensure_ascii=False, separators=(",", ":"), default=str)
     return buf.getvalue().encode("utf-8")
+
+
+def panic_payload(
+    ind: pl.DataFrame, reg: pl.DataFrame, kind: dict[str, str], names: dict[str, str],
+    paper_state: dict[str, Any] | None, n: int = 20,
+) -> dict[str, Any]:  # fmt: skip
+    """Panic dashboard: market state (VIX, VIX/VIX3M, 30-day max), today's status of every panic_rebound
+    variant, and today's candidates (beta x strength before the panic) with IN / LS / exit."""
+    from mw.strategy import library
+
+    r = reg.drop_nulls("vix").sort("as_of")
+    last = r.row(-1, named=True)
+    series = {k: _series(r, k, 260) for k in ("vix", "vix_term")}
+    variants = []
+    for s in library.panic_grid("US", BENCH["US"]):
+        p = s.params
+        x = p["x"]
+        if p["timing"] == "cross":
+            fired = last["vix"] > x and (last["vix_prev"] or 0) <= x
+            wait = f"VIX が {x:g} を超えて引けた日に買い注文（今 {last['vix']:.1f}）"
+        elif p["timing"] == "below":
+            fired = (last["vix_max30"] or 0) > x and last["vix"] < x <= (last["vix_prev"] or 0)
+            wait = f"VIX が {x:g} を超えた後、{x:g} を下回って引けた日（直近30日の最高 {last['vix_max30']:.1f}）"
+        else:
+            fired = (last["vix_max30"] or 0) > x and last["vix_term"] < 1 <= (
+                last["vix_term_prev"] or 0
+            )
+            wait = (
+                f"VIX が {x:g} を超えた後、VIX÷VIX3M が1を下回った日（今 {last['vix_term']:.2f}）"
+            )
+        trend_ok = bool(last.get("spy_trend_pre")) if p["trend"] else True
+        variants.append({"key": s.key, "why": s.why, "fired": bool(fired and trend_ok), "wait": wait,
+                         "trend": p["trend"], "trend_ok": trend_ok, "pick": p["pick"], "k": p["k"], "hold": p["hold"]})  # fmt: skip
+    d = ind["as_of"].max()
+    day = ind.filter(
+        (pl.col("as_of") == d) & (pl.col("dvol20") >= 10e6) & (pl.col("close") >= 10)
+        & pl.col("entity_id").is_in([e for e, k in kind.items() if k == "common"])
+    )  # fmt: skip
+    m20 = (
+        ind.filter(pl.col("as_of") <= d)
+        .sort("as_of")
+        .group_by("entity_id")
+        .agg((pl.col("close").last() / pl.col("close").tail(21).first() - 1).alias("ret20"))
+    )
+    day = day.join(m20, on="entity_id", how="left").drop_nulls(["beta_pct", "pre_pct"])
+    top = day.with_columns((pl.col("beta_pct") + pl.col("pre_pct")).alias("score")).sort(
+        "score", descending=True
+    )
+    cands = []
+    for row in top.head(n).iter_rows(named=True):
+        c, atr = row["close"], row["atr"]
+        cands.append({"id": row["entity_id"], "name": names.get(row["entity_id"], ""), "close": _f(c), "beta": _f(row["beta252"], 2),
+                      "beta_pct": _f(row["beta_pct"], 3), "pre": _f(row["pre_str"]), "pre_pct": _f(row["pre_pct"], 3), "ret20": _f(row["ret20"]),
+                      "stop3": _f(c - 3 * atr), "stop_dis": _f(c * 0.6), "both80": bool(row["beta_pct"] >= 0.8 and row["pre_pct"] >= 0.8)})  # fmt: skip
+    books = []
+    for k, b in ((paper_state or {}).get("books") or {}).items():
+        if k.startswith("panic_rebound"):
+            books.append({"key": k, "equity": _f(b.get("equity", b.get("cash")), 2), "closed": b.get("closed", 0),
+                          "positions": [{x: p.get(x) for x in ("entity_id", "entry", "stop", "entry_date", "shares", "max_hold", "held")} for p in b["positions"]],
+                          "orders": [{x: o.get(x) for x in ("entity_id", "ref", "stop", "signal_date", "shares")} for o in b["orders"]]})  # fmt: skip
+    return {"asof": str(last["as_of"]), "vix": _f(last["vix"], 2), "vix_prev": _f(last["vix_prev"], 2), "vix_term": _f(last["vix_term"], 3),
+            "vix_max30": _f(last["vix_max30"], 2), "spy_trend_pre": bool(last.get("spy_trend_pre")), "series": series,
+            "variants": variants, "candidates": cands, "cand_asof": str(d), "books": books}  # fmt: skip

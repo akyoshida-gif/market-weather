@@ -20,7 +20,9 @@ from mw.ingest.base import raw_key, stamp_pit, upsert_timeseries, write_raw_byte
 SOURCE_ID = "vol_indices"
 SOURCE_VERSION = "0.1.0"
 URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
-SYMBOLS = ["VIX", "VIX9D", "VIX3M", "VIX6M", "VVIX", "SKEW"]
+# SPX: the S&P 500 index close since 1975 (no OHLC), kept here for long-history market studies
+# (panic study: VIX since 1990 needs an index of the same length; ETF prices start in 2010)
+SYMBOLS = ["VIX", "VIX9D", "VIX3M", "VIX6M", "VVIX", "SKEW", "SPX"]
 PUBLISH_UTC = time(3, 0)
 
 

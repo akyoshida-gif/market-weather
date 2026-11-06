@@ -112,6 +112,7 @@ svg.chart{width:100%;height:auto;max-width:100%;display:block;touch-action:pan-y
   </div>
   <div class="tabs" role="tablist" aria-label="画面">
     <button role="tab" id="t-ov" aria-selected="true" aria-controls="p-ov">概要</button>
+    <button role="tab" id="t-panic" aria-selected="false" aria-controls="p-panic">パニック買い</button>
     <button role="tab" id="t-sig" aria-selected="false" aria-controls="p-sig">今日の厳選シグナル</button>
     <button role="tab" id="t-stk" aria-selected="false" aria-controls="p-stk">銘柄分析</button>
     <button role="tab" id="t-cmp" aria-selected="false" aria-controls="p-cmp">比較</button>
@@ -143,6 +144,25 @@ svg.chart{width:100%;height:auto;max-width:100%;display:block;touch-action:pan-y
         <div class="tbl-wrap"><table id="sector-table"></table></div>
       </div>
     </div>
+  </section>
+
+  <section role="tabpanel" id="p-panic" aria-labelledby="t-panic" hidden>
+    <div class="verdict" id="pn-verdict"></div>
+    <div class="kv" id="pn-kv"></div>
+    <div class="grid g2">
+      <div class="panel"><div class="panel-h"><h2>VIX（恐怖指数）</h2><span class="label">点線＝30（パニックの入口）</span></div>
+        <div class="chart-box"><svg class="chart" id="pn-vix" viewBox="0 0 900 240" role="img" aria-label="VIXの推移"></svg><div class="tip" id="pn-vix-tip" hidden></div></div></div>
+      <div class="panel"><div class="panel-h"><h2>VIX ÷ VIX3M</h2><span class="label">点線＝1（上＝目先の恐怖が強い）</span></div>
+        <div class="chart-box"><svg class="chart" id="pn-term" viewBox="0 0 900 240" role="img" aria-label="VIX÷VIX3Mの推移"></svg><div class="tip" id="pn-term-tip" hidden></div></div></div>
+    </div>
+    <div class="panel"><div class="panel-h"><h2>買い候補（今日の時点）</h2><span class="label" id="pn-cand-asof"></span></div>
+      <div class="def" id="pn-cand-def"></div>
+      <div class="tbl-wrap"><table id="pn-cand"></table></div></div>
+    <div class="panel"><div class="panel-h"><h2>デモトレードで並べて試している型（10通り）</h2></div>
+      <div class="tbl-wrap"><table id="pn-var"></table></div>
+      <div class="note">1つのパニックで買うのは最初の1日だけ。1銘柄で損切りに掛かったときの損は資金の1%、1銘柄は資金の10%まで、同時に10銘柄まで。どれもまだ「確かに勝てる」とは言えないため、並べて実際の成績で比べる。</div></div>
+    <div class="panel"><div class="panel-h"><h2>デモトレードの状況（パニック買い）</h2></div><div class="tbl-wrap"><table id="pn-books"></table></div></div>
+    <div class="panel"><div class="panel-h"><h2>検証で分かったこと（2026-11-06）</h2></div><div id="pn-evidence"></div></div>
   </section>
 
   <section role="tabpanel" id="p-sig" aria-labelledby="t-sig" hidden>
@@ -304,6 +324,32 @@ function renderPicks(){const P=M.picks||[];const adopted=(M.strategies||[]).filt
       <div class="note">この戦略の検証期間（2025年〜、ルール作りに使っていない期間）の成績：${t.trades||0}件、勝率 ${pct(t.win)}、1回あたり平均 ${sgn((t.avg||0)*100)}%、PF ${t.pf?t.pf.toFixed(2):'—'}、平均保有 ${t.hold?t.hold.toFixed(1):'—'}日。${short?'空売りは借りられる銘柄のみ。貸株料は成績に含めていません。':''}</div>
       ${M.bars[r.id]?`<div><button class="seg" style="padding:4px 12px;cursor:pointer" data-goto="${esc(r.id)}">チャートを見る</button></div>`:''}</div>`}).join(''):'<div class="panel"><div class="empty">採用中の戦略の条件を満たした銘柄はありません。無理にポジションを取らない日です。</div></div>'}
 
+// ---------------- パニック買い ----------------
+const PN_PICK={bs:'ベータ上位×パニック前に強い',beta:'ベータ上位',index:'S&P 500（SPY）'};
+function renderPanic(){const P=M.panic;
+  if(!P){$('pn-verdict').innerHTML='<div class="head">日本のパニック買いは準備中です（日経VI での検証がまだ）。</div>';['pn-kv','pn-cand','pn-var','pn-books','pn-evidence','pn-cand-def','pn-vix','pn-term'].forEach(i=>$(i).innerHTML='');return}
+  const fired=P.variants.filter(v=>v.fired);const v=P.vix,mx=P.vix_max30,ts=P.vix_term;
+  const head=fired.length?`今日は買いの日：${fired.length} 通りの型でシグナルが出た。次の寄り付きで買う。`:mx>30?`パニック中（直近30日の VIX 最高 ${mx.toFixed(1)}）。型ごとの買いの日を待つ。`:v>=25?`警戒：VIX ${v.toFixed(1)}。30 を超えて引けたらパニック（早めに買う型が動く）。`:`平常：VIX ${v.toFixed(1)}。パニック買いの出番はない。`;
+  $('pn-verdict').innerHTML=`<div class="label">${P.asof} 引け時点の判定（ルールによる）</div><div class="head">${esc(head)}</div><ul>
+    <li>VIX ${v.toFixed(2)}（前日 ${P.vix_prev!=null?P.vix_prev.toFixed(2):'—'}）。30 を超えるとパニック。36年の検証では、効き始めは 30。</li>
+    <li>VIX÷VIX3M ${ts.toFixed(2)}。${ts>=1?'1 を超えていて、目先の恐怖が強い（パニックの形）。':'1 未満で平常の形。'}</li>
+    <li>パニック前の相場の流れ（20日前に S&P 500 が上向きの200日線の上）：${P.spy_trend_pre?'上昇相場（パニック後に戻りやすい側）':'上昇相場ではない（戻りが弱い側）'}。</li></ul>`;
+  $('pn-kv').innerHTML=[['VIX',v.toFixed(2),'30超＝パニック'],['直近30日の最高',mx.toFixed(2),'パニックが起きたか'],['VIX÷VIX3M',ts.toFixed(3),'1超＝目先の恐怖が強い'],['パニック前の流れ',P.spy_trend_pre?'上昇':'上昇ではない','20日前の S&P 500 と200日線']].map(a=>`<div><span class="label">${a[0]}</span><span class="v">${a[1]}</span><span class="t">${a[2]}</span></div>`).join('');
+  const sv=P.series.vix,st=P.series.vix_term;
+  lineChart($('pn-vix'),$('pn-vix-tip'),[{name:'VIX',color:'var(--accent)',pts:sv},{name:'30',color:'var(--down)',pts:sv.map(p=>[p[0],30]),dash:1,w:1}],{fmt:x=>x.toFixed(1),H:240});
+  lineChart($('pn-term'),$('pn-term-tip'),[{name:'VIX÷VIX3M',color:'var(--accent)',pts:st},{name:'1',color:'var(--down)',pts:st.map(p=>[p[0],1]),dash:1,w:1}],{fmt:x=>x.toFixed(2),H:240});
+  $('pn-cand-asof').textContent=P.cand_asof+' 引け';
+  $('pn-cand-def').innerHTML='パニックの買いの日になったら、上から10銘柄を<b>翌日の寄り付き</b>で買う（基準＝買いの日の終値）。<b>ベータ</b>＝市場が1%動くときに何%動くか（過去1年）。<b>パニック前の半年</b>＝1か月前までの半年の上昇率。どちらも全銘柄の中の順位（100%＝一番上）。売るのは60営業日後。損切りは型によって「3ATR 下」か「−40%（大事故の備え）」。売買代金1,000万ドル以上・株価10ドル以上の普通株だけ。行を押すとチャートを表示。';
+  $('pn-cand').innerHTML=`<thead><tr><th>#</th><th>銘柄</th><th class="num">終値</th><th class="num">ベータ（順位）</th><th class="num">パニック前の半年（順位）</th><th class="num">直近1か月</th><th class="num">損切り 3ATR</th><th class="num">損切り −40%</th><th>条件</th></tr></thead><tbody>${P.candidates.map((c,i)=>`<tr ${M.bars[c.id]?`data-id="${esc(c.id)}" tabindex="0" style="cursor:pointer"`:''}><td class="mono">${i+1}</td><td><b>${esc(c.id.split(':')[1])}</b> <span class="muted">${esc((c.name||'').slice(0,28))}</span></td><td class="num mono">${fp(c.close)}</td><td class="num mono">${c.beta!=null?c.beta.toFixed(2):'—'}（${pct(c.beta_pct)}）</td><td class="num mono ${cls(c.pre)}">${sgn(c.pre*100)}%（${pct(c.pre_pct)}）</td><td class="num mono ${cls(c.ret20)}">${c.ret20!=null?sgn(c.ret20*100)+'%':'—'}</td><td class="num mono down">${fp(c.stop3)}（${sgn((c.stop3/c.close-1)*100)}%）</td><td class="num mono down">${fp(c.stop_dis)}</td><td>${c.both80?'<span class="up">両方とも上位20%</span>':'<span class="muted">どちらかが上位20%の外</span>'}</td></tr>`).join('')}</tbody>`;
+  $('pn-var').innerHTML=`<thead><tr><th>今日</th><th>買う日</th><th>銘柄</th><th>損切り</th><th>相場の流れ</th><th class="num">保有</th></tr></thead><tbody>${P.variants.map(x=>`<tr><td>${x.fired?'<span class="call u2">買いの日</span>':'<span class="muted">待つ</span>'}</td><td class="wrap">${esc(x.wait)}</td><td>${esc(PN_PICK[x.pick])}</td><td>${x.k>0?x.k+'ATR 下':'−40%（大事故だけ）'}</td><td>${x.trend?(x.trend_ok?'上昇相場だけ（今は満たす）':'上昇相場だけ（今は満たさない）'):'問わない'}</td><td class="num">${x.hold}日</td></tr>`).join('')}</tbody>`;
+  $('pn-books').innerHTML=P.books.length?`<thead><tr><th>型</th><th class="num">資金</th><th>保有中</th><th>注文中</th><th class="num">決済済み</th></tr></thead><tbody>${P.books.map(b=>`<tr><td class="mono" style="font-size:12px">${esc(b.key.replace('panic_rebound|',''))}</td><td class="num mono">${b.equity!=null?Math.round(b.equity).toLocaleString():'—'}</td><td>${b.positions.map(p=>esc(p.entity_id.split(':')[1])+' '+fp(p.entry)).join('、')||'—'}</td><td>${b.orders.map(o=>esc(o.entity_id.split(':')[1])).join('、')||'—'}</td><td class="num">${b.closed}</td></tr>`).join('')}</tbody>`:'<tbody><tr><td class="empty">デモトレードへの追加はマージ後に始まります（各型の資金は10万ドル）。</td></tr></tbody>';
+  $('pn-evidence').innerHTML=`<ul style="margin:0;padding-left:1.2em;display:grid;gap:6px">
+    <li><b>どこからがパニックか</b>（S&P 500、1990〜2026年）：60日後の平均は VIX 25未満で+1〜2%、25〜30で+3.7%、30〜40で+6%、40〜50で+10%。<b>効き始めは30</b>。50超（2008年など）は早く買うと負けた。</li>
+    <li><b>上昇相場の中の急落</b>（VIX 35超、20日前に上向きの200日線の上）は、60日後に83%の確率で上昇、平均+7.9%。下落相場の中の急落は平均+2.1%。</li>
+    <li><b>どの銘柄が戻るか</b>（2010〜2026年、15回）：ベータが高い×パニック前に強い銘柄は、損切りなしの60日で平均+13%（S&P 500 は+5%）。</li>
+    <li><b>実際の売買の形</b>（損切りあり、上位10銘柄）：VIX 30を超えた日に買う型は17回で平均+17%、中央値+7%、17回中11回が利益。最悪の回は−29%（2011年8月）。2011年・2021年末・2022年の下落相場で負け、2018年末・2020年・2024年8月・2025年4月・2026年3月の急落で大きく勝った。</li>
+    <li><b>注意</b>：パニックは十数回しかなく、成績は数回の大きな戻りで決まっている。上場廃止の銘柄が含まれないため、成績は良く見えすぎている可能性がある。</li></ul>`}
+
 // ---------------- 銘柄分析 ----------------
 function analyze(bars){const C=bars.map(b=>b[4]),H=bars.map(b=>b[2]),Lw=bars.map(b=>b[3]),V=bars.map(b=>b[5]||0),N=bars.length,lastC=C[N-1];
   const ma20=sma(C,20),ma50=sma(C,50),ma200=sma(C,200);let a=Math.max(0,N-120);for(let i=a;i<N;i++)if(Lw[i]<Lw[a])a=i;
@@ -406,12 +452,12 @@ function renderAbout(){const rows=[['作成日時',DATA.generated_at.slice(0,16)
   $('about').innerHTML=`<tbody>${rows.map(([a,b])=>`<tr><td>${a}</td><td class="wrap">${esc(b)}</td></tr>`).join('')}</tbody>`}
 
 // ---------------- wiring ----------------
-const TABS=['ov','sig','stk','cmp','bt','about'];
+const TABS=['ov','panic','sig','stk','cmp','bt','about'];
 function showTab(k){TABS.forEach(t=>{$('t-'+t).setAttribute('aria-selected',t===k);$('p-'+t).hidden=t!==k});try{localStorage.setItem('mw2-tab',k)}catch(e){}window.scrollTo({top:0})}
 TABS.forEach(t=>$('t-'+t).addEventListener('click',()=>showTab(t)));
 function goStock(id){if(!M.bars[id])return;CUR=id;renderStock();showTab('stk')}
 const rowNav=(el,fn)=>{el.addEventListener('click',e=>{const tr=e.target.closest('tr[data-id]');if(tr)fn(tr.dataset.id)});el.addEventListener('keydown',e=>{const tr=e.target.closest('tr[data-id]');if(tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();fn(tr.dataset.id)}})};
-rowNav($('sector-table'),goStock);$('pick-list').addEventListener('click',e=>{const b=e.target.closest('[data-goto]');if(b)goStock(b.dataset.goto)});
+rowNav($('sector-table'),goStock);rowNav($('pn-cand'),goStock);$('pick-list').addEventListener('click',e=>{const b=e.target.closest('[data-goto]');if(b)goStock(b.dataset.goto)});
 const segWire=(id,fn)=>$(id).addEventListener('click',e=>{const b=e.target.closest('button[data-r]');if(!b)return;[...$(id).children].forEach(x=>x.setAttribute('aria-pressed',x===b));fn(+b.dataset.r)});
 segWire('s-range',v=>{RANGE=v;renderStock()});segWire('c-range',v=>{CRANGE=v;renderCompare()});segWire('kpi-range',v=>{KRANGE=v;renderKpiChart()});
 $('kpis').addEventListener('click',e=>{const b=e.target.closest('.kpi');if(!b)return;KPI=+b.dataset.i;[...$('kpis').children].forEach(x=>x.setAttribute('aria-pressed',x===b));renderKpiChart()});
@@ -423,7 +469,7 @@ function setMarket(k){MKT=k;M=DATA.markets[k];try{localStorage.setItem('mw2-mkt'
   const ids=Object.keys(M.bars).sort((a,b)=>(a===M.bench?-1:b===M.bench?1:a.localeCompare(b)));
   $('s-pick').innerHTML=ids.map(i=>`<option value="${esc(i)}">${esc(i.split(':')[1])} ${esc((M.names[i]||'').slice(0,24))}</option>`).join('');
   CUR=ids.find(i=>i!==M.bench)||ids[0];CMP=[];KPI=0;
-  renderOverview();renderPicks();renderStock();renderCompare();renderBT();renderAbout()}
+  renderOverview();renderPanic();renderPicks();renderStock();renderCompare();renderBT();renderAbout()}
 $('mkt-US').onclick=()=>setMarket('US');$('mkt-JP').onclick=()=>setMarket('JP');
 let im='US',it='ov';try{im=localStorage.getItem('mw2-mkt')||'US';it=localStorage.getItem('mw2-tab')||'ov'}catch(e){}
 setMarket(im==='JP'?'JP':'US');showTab(TABS.includes(it)?it:'ov');
