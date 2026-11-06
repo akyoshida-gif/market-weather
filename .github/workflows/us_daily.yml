@@ -3,6 +3,7 @@ name: us_daily
 on:
   schedule:
     - cron: "30 2 * * 2-6"   # after Cboe (~01:30 UTC) and FINRA Reg SHO (<=23:00 UTC)
+    - cron: "15 5 * * 2-6"   # second try before the US open: scheduled runs are often hours late
     - cron: "0 14 * * 1-5"   # retry / catch late publications (idempotent)
   workflow_dispatch:
     inputs:
