@@ -133,8 +133,8 @@ def panic_rebound(
     trend: bool = False,
 ) -> Strategy:
     """Buy after a VIX panic. Episode: VIX closed above `x` within the last 30 sessions. Entry day by `timing`,
-    stocks by `pick`, stop k*ATR below the close (k=0: only a -40% disaster stop; the size is then capped by
-    the 10%-of-equity rule), no target, sell after `hold` sessions. trend: only panics that hit an uptrend
+    stocks by `pick`, stop k*ATR below the close (k=0: only a -40% disaster stop; with 1% risk per trade the
+    position is then 2.5% of equity), no target, sell after `hold` sessions. trend: only panics that hit an uptrend
     (20 sessions earlier SPY was above a rising 200-day line)."""
     t_name, t_cond = PANIC_TIMING[timing]
     if timing == "below":
@@ -167,7 +167,7 @@ def panic_rebound(
     stop_txt = (
         f"損切りは {k:g}ATR 下"
         if k > 0
-        else "損切りは −40%（大事故の備えだけ。1銘柄は資金の10%まで）"
+        else "損切りは −40%（大事故の備えだけ。そのぶん1銘柄は資金の2.5%と小さく買う）"
     )
     return Strategy(
         key=f"panic_rebound|x{x:g}|{timing}|{pick}|h{hold}|k{k:g}" + ("|up" if trend else ""), label="パニック後の買い",
