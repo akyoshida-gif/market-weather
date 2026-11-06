@@ -1,6 +1,8 @@
 import json
 from datetime import date
 
+import polars as pl
+
 from mw.ingest.us import fundamentals as F
 
 
@@ -107,3 +109,9 @@ def test_quarterly_keeps_each_filing_and_prefers_the_main_tag() -> None:
     ]
     assert q.filter(q["concept"] == "assets")["period"].to_list() == ["instant"]
     assert 210.0 not in q["val"].to_list()  # year-to-date values are dropped
+
+
+def test_company_without_matching_facts_gives_an_empty_table_with_dates() -> None:
+    df = F.parse_companyfacts(json.dumps({"cik": 1, "facts": {}}).encode())
+    assert df.height == 0 and df.schema["end"] == pl.Date
+    assert F.quarterly(df).height == 0

@@ -289,7 +289,7 @@ def run_calendar(storage: GuardedStorage, http: HttpClient, backfill: bool) -> d
     )
     counts = (
         df.group_by("event")
-        .agg(pl.len(), pl.col("date").min(), pl.col("date").max())
+        .agg(pl.len(), pl.col("date").min().alias("first"), pl.col("date").max().alias("last"))
         .sort("event")
         .rows()
     )
