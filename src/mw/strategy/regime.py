@@ -66,6 +66,13 @@ def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl
         (C("SPY") > C("SPY").rolling_mean(50)).alias("spy_up50"),
         (C("SPY") > C("SPY").rolling_mean(200)).alias("spy_up200"),
         _chg("SPY", 20).alias("spy_ret20"),
+        # the trend BEFORE a panic: 20 sessions ago SPY was above a rising 200-day line (panic_rebound)
+        (
+            (C("SPY") > C("SPY").rolling_mean(200))
+            & (C("SPY").rolling_mean(200) > C("SPY").rolling_mean(200).shift(20))
+        )
+        .shift(20)
+        .alias("spy_trend_pre"),
         _chg("def_cyc", 20).alias("def_cyc_chg20"),
         _chg("iwm_spy", 20).alias("iwm_spy_chg20"),
         _chg("rsp_spy", 20).alias("rsp_spy_chg20"),
@@ -85,6 +92,12 @@ def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl
             C("IDX:US:VIX").alias("vix"),
             (C("IDX:US:VIX") / C("IDX:US:VIX3M")).alias("vix_term"),
             (C("IDX:US:VIX") - C("IDX:US:VIX").shift(5)).alias("vix_chg5"),
+        ).with_columns(
+            # panic state (panic_rebound): the day before, and the highest level of the last 30 sessions
+            C("vix").shift(1).alias("vix_prev"),
+            C("vix_term").shift(1).alias("vix_term_prev"),
+            C("vix").rolling_max(30, min_samples=1).alias("vix_max30"),
+            C("vix_term").rolling_max(30, min_samples=1).alias("vix_term_max30"),
         )
         r = r.join(v, on="as_of", how="left")
     if fred.height:

@@ -19,7 +19,7 @@ from mw.core.storage import open_storage
 from mw.ingest.us.options_chain import load_watchlist
 from mw.report import dashboard as D
 from mw.signals import rules
-from mw.strategy import engine, select
+from mw.strategy import engine, regime, select
 
 TEMPLATE = (
     Path(__file__).resolve().parent.parent
@@ -162,6 +162,25 @@ def main() -> None:
             )
         m["family_labels"] = {f["family"]: f["strategy"]["label"] for f in strat_out}
         if market == "US":
+            us_reg = regime.us_regime(prices.select("entity_id", "as_of", "close"), vol, fred)
+            try:
+                paper_state = json.loads(storage.get_bytes("paper/US/state.json"))
+            except FileNotFoundError:
+                paper_state = None
+            m["panic"] = D.panic_payload(
+                ind,
+                us_reg,
+                dict(zip(uni["entity_id"], uni["kind"], strict=True)),
+                names,
+                paper_state,
+            )
+            for c in m["panic"]["candidates"]:
+                if c["id"] not in m["bars"] and c["id"] in set(
+                    prices["entity_id"].unique().to_list()
+                ):
+                    m["bars"].update(D.stock_bars(prices, [c["id"]]))
+                    m["names"][c["id"]] = c["name"]
+                    m["sectors"][c["id"]] = sec_of.get(c["id"], "")
             m["options"] = {k: v for k, v in D.options_summary(storage).items() if k in detail}
             m["short_vol"] = D.finra_short(storage, detail, since60)
             m["short_interest"] = D.short_interest(storage, detail)

@@ -69,3 +69,15 @@ def test_incomplete_latest_session_is_not_processed() -> None:
     done = trader.complete_sessions(pl.DataFrame(rows))
     assert days[6] in done
     assert days[7] not in done
+
+
+def test_us_session_waits_for_its_vix_close() -> None:
+    import polars as pl
+
+    days = [date(2026, 11, d) for d in (2, 3, 4, 5)]
+    ann = pl.DataFrame({"as_of": days, "vix": [20.0, 21.0, 19.0, None]})
+    assert trader.missing_vix(ann) == {date(2026, 11, 5)}
+    old = pl.DataFrame(
+        {"as_of": [date(2026, 1, d) for d in range(1, 10)], "vix": [None] + [20.0] * 8}
+    )
+    assert trader.missing_vix(old) == set()  # an old gap never blocks trading
