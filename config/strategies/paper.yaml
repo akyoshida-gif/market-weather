@@ -16,6 +16,10 @@ US:
   - {key: "panic_rebound|x30|term|index|h60|k0", tier: candidate}
   - {key: "panic_rebound|x25|term|bs|h60|k3", tier: candidate}
   - {key: "panic_rebound|x35|cross|bs|h60|k0|up", tier: candidate}
+  # caps on over-extended names (P17, 2026-11-09)
+  - {key: "panic_rebound|x30|cross|bs|h60|k3|atr6", tier: candidate}
+  - {key: "panic_rebound|x30|cross|bs|h60|k0|atr6", tier: candidate}
+  - {key: "panic_rebound|x30|cross|bs|h60|k0|pre100", tier: candidate}
 JP:
   - {key: "squeeze_break|vr2.5|c1.0|rs0.9|R3.0", tier: adopted}
   - {key: "gap_go|g0.04|R3.0", tier: adopted}
