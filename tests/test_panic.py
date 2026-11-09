@@ -55,3 +55,17 @@ def test_every_paper_strategy_key_can_be_rebuilt() -> None:
     for market, items in cfg.items():
         for c in items:
             assert library.by_key(market, bench[market], c["key"]).key == c["key"]
+
+
+def test_cap_drops_names_that_move_too_much() -> None:
+    vix = [20.0] * 20
+    vix[5] = 31.0
+    df = _frame(vix, [0.9] * 20).with_columns(
+        pl.when(pl.col("entity_id") == "US:AAA").then(5.0).otherwise(1.0).alias("atr"),
+        pl.lit(0.5).alias("pre_str"),
+    )  # AAA: ATR 10% of the price
+    s = library.panic_rebound("US", "US:SPY", 30, "cross", "bs", 60, 3.0, cap="atr6")
+    assert s.key.endswith("|atr6")
+    assert df.filter(s.entry()).height == 0
+    s2 = library.panic_rebound("US", "US:SPY", 30, "cross", "bs", 60, 3.0, cap="pre100")
+    assert df.filter(s2.entry())["entity_id"].to_list() == ["US:AAA"]

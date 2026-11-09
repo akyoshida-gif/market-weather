@@ -120,6 +120,12 @@ PANIC_PICK = {
     "beta": ("ベータ上位20%", lambda: C("beta_pct") >= 0.8, lambda: C("beta_pct")),
     "index": ("S&P 500（SPY）そのもの", None, None),
 }  # fmt: skip
+# Caps on over-extended names (backlog P17, docs/PANIC_STUDY.md section 6): the plain top picks lost most when the
+# names that ran hardest before the panic broke down (2021-12, 2022).
+PANIC_CAP = {
+    "atr6": ("1日の値幅（ATR）が株価の6%以下の銘柄だけ", lambda: C("atr") <= 0.06 * C("close")),
+    "pre100": ("パニック前の半年の上昇が+100%以下の銘柄だけ", lambda: C("pre_str") <= 1.0),
+}  # fmt: skip
 
 
 def panic_rebound(
@@ -131,6 +137,7 @@ def panic_rebound(
     hold: int,
     k: float,
     trend: bool = False,
+    cap: str = "",
 ) -> Strategy:
     """Buy after a VIX panic. Episode: VIX closed above `x` within the last 30 sessions. Entry day by `timing`,
     stocks by `pick`, stop k*ATR below the close (k=0: only a -40% disaster stop; with 1% risk per trade the
@@ -164,20 +171,23 @@ def panic_rebound(
         return fired & (before == 0)
 
     trend_ok = (lambda: C("spy_trend_pre").fill_null(False)) if trend else (lambda: pl.lit(True))  # noqa: E731
+    cap_name, cap_ok = PANIC_CAP[cap] if cap else ("", lambda: pl.lit(True))
     stop_txt = (
         f"損切りは {k:g}ATR 下"
         if k > 0
         else "損切りは −40%（大事故の備えだけ。そのぶん1銘柄は資金の2.5%と小さく買う）"
     )
     return Strategy(
-        key=f"panic_rebound|x{x:g}|{timing}|{pick}|h{hold}|k{k:g}" + ("|up" if trend else ""), label="パニック後の買い",
+        key=f"panic_rebound|x{x:g}|{timing}|{pick}|h{hold}|k{k:g}" + ("|up" if trend else "") + (f"|{cap}" if cap else ""),
+        label="パニック後の買い",
         horizon="中期", side="long",
-        entry=lambda: (C("vix_max30") > x) & tc() & pc() & universe() & trend_ok(),
+        entry=lambda: (C("vix_max30") > x) & tc() & pc() & universe() & trend_ok() & cap_ok().fill_null(False),
         stop=(lambda: C("close") - k * C("atr")) if k > 0 else (lambda: C("close") * 0.6), target=lambda: pl.lit(INF),
-        max_hold=hold, rank=pr, params={"x": x, "timing": timing, "pick": pick, "hold": hold, "k": k, "trend": trend},
+        max_hold=hold, rank=pr, params={"x": x, "timing": timing, "pick": pick, "hold": hold, "k": k, "trend": trend, "cap": cap},
         why=f"VIX が {x:g} を超えるパニックの後は、市場全体が戻りやすい（1990年以降、VIX 30超で60日後の S&P 500 は平均+6%）。"
         f"買う日：{t_name}。銘柄：{p_name}。{stop_txt}、{hold} 日後に売る。"
-        + ("上昇相場の中の急落だけ（20日前に S&P 500 が上向きの200日線の上）。" if trend else ""),
+        + ("上昇相場の中の急落だけ（20日前に S&P 500 が上向きの200日線の上）。" if trend else "")
+        + (f"行き過ぎた銘柄を除く：{cap_name}。" if cap else ""),
     )  # fmt: skip
 
 
@@ -189,7 +199,10 @@ def panic_grid(market: str, bench: str) -> list[Strategy]:
     keys = [(30, "cross", "bs", 60, 3.0, False), (30, "below", "bs", 60, 3.0, False), (30, "term", "bs", 60, 3.0, False),
             (35, "term", "bs", 60, 3.0, False), (30, "cross", "bs", 60, 0.0, False), (30, "cross", "bs", 60, 3.0, True),
             (30, "cross", "index", 60, 0.0, False), (30, "term", "index", 60, 0.0, False), (25, "term", "bs", 60, 3.0, False),
-            (35, "cross", "bs", 60, 0.0, True)]  # fmt: skip
+            (35, "cross", "bs", 60, 0.0, True),
+            # caps on over-extended names (P17, 2026-11-09)
+            (30, "cross", "bs", 60, 3.0, False, "atr6"), (30, "cross", "bs", 60, 0.0, False, "atr6"),
+            (30, "cross", "bs", 60, 0.0, False, "pre100")]  # fmt: skip
     return [panic_rebound(market, bench, *k) for k in keys]
 
 
