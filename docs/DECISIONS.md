@@ -164,3 +164,10 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 - Owner (2026-11-06): do not fixate on one method; run many patterns in the demo; show today's buy candidates on the dashboard; keep a list of everything not yet done (`docs/BACKLOG.md`).
 - Indicators gain `beta252`, `pre_str` and their cross-sectional percentiles; the US regime gains the panic state (`vix_prev`, `vix_term_prev`, `vix_max30`, `spy_trend_pre`). Panic strategies are kept out of `library.grid` (they need regime columns) and resolved by `by_key`. Only the first day of a panic triggers (VIX swings around the level).
 - Cboe `SPX` (close only, since 1975) is added to `vol_indices` for long-history market studies.
+
+## ADR-0021 | 2026-11-12 | accepted | Claude merges its own PRs in this repository
+
+- Owner (2026-11-12): "In the market-weather repository you may merge freely." Until now every PR waited for the owner.
+- Rule (CLAUDE.md): Claude may merge after CI is green and a `reviewer` subagent finds no serious issue, and reports each merge with the PR URL.
+- Still left to the owner: the forecast ledger, PIT rules, promotion gate thresholds, DESIGN.md principles (Section 0.2); this rule itself and this ADR; `ci.yml` and anything that weakens tests or checks; secrets, workflow permissions, repository visibility; anything that adds cost; deleting data. (Reviewer 2026-11-12: otherwise Claude could widen its own rights or hollow out the CI condition.)
+- Deviation from DESIGN.md 13.4. That section allows auto-merge only for feature additions that passed the gates in shadow, and asks for an owner notice plus a 7-day delay before model-architecture or validation-protocol changes. Under the new rule, such changes are merged after review, and each one is recorded here as an ADR so the owner can follow it.
