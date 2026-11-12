@@ -18,7 +18,7 @@ from mw.core.http import HttpClient
 from mw.core.logging import job_run, setup_logging
 from mw.core.storage import GuardedStorage, open_storage
 from mw.ingest import prices
-from mw.ingest.base import raw_key, write_raw_bytes
+from mw.ingest.base import raw_key, write_raw_bytes, year_key
 from mw.universe import jp, us
 
 
@@ -64,6 +64,29 @@ def snapshot_jp(storage: GuardedStorage, http: HttpClient) -> dict[str, Any]:
     }
 
 
+def repair_splits(
+    storage: GuardedStorage, market: str, uni: pl.DataFrame, since: date, end: date
+) -> dict[str, Any]:
+    """Stocks with a split since `since`: download their whole history again.
+
+    Their older rows may have been stored before the split; refetching makes every stored row
+    adjusted the same way (BACKLOG D5).
+    """
+    ids: set[str] = set()
+    for y in range(since.year, end.year + 1):
+        key = year_key("prices_daily", market, y)
+        if not storage.exists(key):
+            continue
+        df = storage.read_parquet(key).filter(pl.col("as_of") >= since)
+        ids |= set(prices.split_entities(df))
+    sub = uni.filter(pl.col("entity_id").is_in(sorted(ids)))
+    if sub.height == 0:
+        return {"split_stocks": 0}
+    r = prices.ingest(storage, market, sub, prices.FULL_START, end, refetch_splits=False)
+    return {"found": len(ids), "not_in_universe": len(ids) - sub.height, "split_stocks": sub.height,
+            "rows": r["rows"], "missing": r["missing"], "errors": r["errors"]}  # fmt: skip
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--market", choices=["US", "JP"], required=True)
@@ -71,6 +94,12 @@ def main() -> int:
     p.add_argument("--start", type=date.fromisoformat, default=None, help="backfill start date")
     p.add_argument("--limit", type=int, default=None, help="only first N symbols (testing)")
     p.add_argument("--skip-universe", action="store_true")
+    p.add_argument(
+        "--repair-splits-since",
+        type=date.fromisoformat,
+        default=None,
+        help="one-off: download the full history again for stocks with a split since this date",
+    )
     args = p.parse_args()
     setup_logging()
     storage = open_storage(load_settings().storage)
@@ -84,14 +113,26 @@ def main() -> int:
             failed = True
     try:
         with job_run(
-            storage, f"prices_{args.market.lower()}", start=str(args.start), days=args.days
+            storage,
+            f"prices_{args.market.lower()}",
+            start=str(args.start),
+            days=args.days,
+            repair_splits_since=str(args.repair_splits_since),
         ) as s:
             uni = latest_universe(storage, args.market)
             if args.limit:
                 uni = uni.head(args.limit)
             end = datetime.now(UTC).date()
-            start = args.start or end - timedelta(days=args.days)
-            s["result"] = prices.ingest(storage, args.market, uni, start, end)
+            if args.repair_splits_since:
+                s["result"] = repair_splits(
+                    storage, args.market, uni, args.repair_splits_since, end
+                )
+            else:
+                start = args.start or end - timedelta(days=args.days)
+                # a manual backfill (--start) already downloads the history: no extra split refetch
+                s["result"] = prices.ingest(
+                    storage, args.market, uni, start, end, refetch_splits=args.start is None
+                )
     except Exception:
         failed = True
     http.close()

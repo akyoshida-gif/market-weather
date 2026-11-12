@@ -19,10 +19,14 @@ on:
       limit:
         description: "only first N symbols (testing)"
         required: false
+      repair_splits_since:
+        description: "one-off YYYY-MM-DD: refetch the full history of stocks with a split since then"
+        required: false
 permissions:
   contents: read
 concurrency:
-  group: prices-${{ inputs.market || github.event.schedule }}
+  # one group per market for scheduled AND manual runs: two runs rewriting the same year file would lose rows
+  group: prices-${{ inputs.market || ((github.event.schedule == '30 7 * * 1-5' || github.event.schedule == '30 10 * * 1-5') && 'JP' || 'US') }}
   cancel-in-progress: false
 jobs:
   prices:
@@ -46,10 +50,12 @@ jobs:
           IN_MARKET: ${{ inputs.market }}
           IN_START: ${{ inputs.start }}
           IN_LIMIT: ${{ inputs.limit }}
+          IN_REPAIR: ${{ inputs.repair_splits_since }}
         run: |
           case "$SCHED" in "30 7 * * 1-5"|"30 10 * * 1-5") MARKET=JP;; *) MARKET="${IN_MARKET:-US}";; esac
           ARGS="--market $MARKET"
           [ -n "$IN_START" ] && ARGS="$ARGS --start $IN_START"
           [ -n "$IN_LIMIT" ] && ARGS="$ARGS --limit $IN_LIMIT"
+          [ -n "$IN_REPAIR" ] && ARGS="$ARGS --repair-splits-since $IN_REPAIR --skip-universe"
           echo "args: $ARGS"
           uv run python -m jobs.prices_daily $ARGS
