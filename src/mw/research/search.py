@@ -17,7 +17,7 @@ Validation numbers are reported but never used for choosing. The holdout period 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import polars as pl
@@ -72,7 +72,20 @@ def load(
     m = pl.scan_parquet(f"{atlas_dir}/market.parquet")
     mf = [c for c in m.collect_schema().names() if c.startswith("m_")]
     df = df.join(m.select("as_of", *mf), on="as_of", how="left").collect()
-    return df, feats + mf
+    return purge(df, label, periods), feats + mf
+
+
+def purge(df: pl.DataFrame, label: str, periods: dict) -> pl.DataFrame:
+    """Drop rows whose outcome window crosses the end of their period (DESIGN: purge / embargo), e.g. a 10-session
+    outcome from the last days of the discovery period would use validation-period prices."""
+    h = int("".join(ch for ch in label if ch.isdigit()) or 0)
+    if h == 0:
+        return df
+    gap = timedelta(days=int(h * 1.5) + 3)  # sessions -> calendar days, generous
+    keep = pl.lit(False)
+    for lo, hi in periods.values():
+        keep = keep | ((C("as_of") >= lo) & (C("as_of") <= hi - gap))
+    return df.filter(keep)
 
 
 def encode(df: pl.DataFrame, names: list[str], periods: dict = PERIODS) -> Data:

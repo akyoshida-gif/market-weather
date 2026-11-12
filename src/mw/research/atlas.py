@@ -49,10 +49,33 @@ def _ret(n: int) -> pl.Expr:
     return C("close") / C("close").shift(n) - 1
 
 
+def repair_splits(df: pl.DataFrame) -> pl.DataFrame:
+    """The daily price job refetches only the last few days, so a split that happened after the backfill can be
+    missing from the stored history: on the split day the close jumps by 1/ratio. Detect those days (the jump
+    matches 1/ratio better than 'no jump') and adjust the older rows ourselves (prices / ratio, volume x ratio),
+    the same way the data source adjusts history."""
+    if "splits" not in df.columns:
+        return df
+    df = df.sort(G, "as_of")
+    ratio = C("splits").fill_null(0)
+    r = C("close") / C("close").shift(1).over(G)
+    unadj = (ratio > 0) & (ratio != 1) & ((r * ratio - 1).abs() < (r - 1).abs())
+    g = pl.when(unadj.fill_null(False)).then(ratio).otherwise(1.0)
+    fix = (g.reverse().cum_prod().reverse().over(G) / g).alias(
+        "_fix"
+    )  # product of missing ratios after the day
+    df = df.with_columns(fix)
+    return df.with_columns(
+        *[(C(k) / C("_fix")).alias(k) for k in ("open", "high", "low", "close")],
+        (C("volume") * C("_fix")).alias("volume"),
+    ).drop("_fix")
+
+
 def raw_close(df: pl.DataFrame) -> pl.Expr:
     """Prices are split-adjusted afterwards (a later 1-for-20 reverse split multiplies all older prices by 20),
     so price LEVELS leak the future. The price traders actually saw = adjusted close x product of the split
-    ratios after that day (needs a `splits` column: ratio on the split day, 0/null = none)."""
+    ratios after that day (needs a `splits` column: ratio on the split day, 0/null = none). Run repair_splits
+    first so that every split is applied to the history exactly once."""
     if "splits" not in df.columns:
         return C("close")
     f = pl.when(C("splits").fill_null(0) > 0).then(C("splits")).otherwise(1.0)
@@ -63,7 +86,7 @@ def raw_close(df: pl.DataFrame) -> pl.Expr:
 def stock_features(df: pl.DataFrame) -> pl.DataFrame:
     """df: entity_id, as_of, open, high, low, close, volume (+ splits). Returns df + raw_close + s_* columns.
     Price-level features use raw_close (see raw_close); everything else is scale-free."""
-    df = df.sort(G, "as_of")
+    df = repair_splits(df.sort(G, "as_of"))
     df = df.with_columns(raw_close(df).alias("raw_close"))
     pc = C("close").shift(1)
     tr = pl.max_horizontal(C("high") - C("low"), (C("high") - pc).abs(), (C("low") - pc).abs())
@@ -464,8 +487,10 @@ def market_features(px: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> 
     )
     series = {"DGS10": "m_y10", "T10Y2Y": "m_curve", "BAMLH0A0HYM2": "m_hy", "DTWEXBGS": "m_usd", "DCOILWTICO": "m_oil",
               "NFCI": "m_nfci", "T10YIE": "m_infl_exp"}  # fmt: skip
+    # FRED publishes after the US close (stored published_at ~23:00 UTC): usable from the next day. Values are the
+    # latest revision, not the first print (revised series such as NFCI read slightly better than they were).
     for sid, name in series.items():
-        s = (fred.filter(C(G) == f"MACRO:FRED:{sid}").select(C("published_at").dt.date().alias("known"), C("value").alias(name))
+        s = (fred.filter(C(G) == f"MACRO:FRED:{sid}").select((C("published_at").dt.date() + pl.duration(days=1)).alias("known"), C("value").alias(name))
              .drop_nulls().sort("known").unique("known", keep="last").sort("known"))  # fmt: skip
         if s.height == 0:
             continue

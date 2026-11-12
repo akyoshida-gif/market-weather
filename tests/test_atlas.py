@@ -67,3 +67,71 @@ def test_price_level_uses_the_price_seen_at_the_time() -> None:
     f = atlas.stock_features(df)
     assert f["raw_close"].to_list()[:5] == [0.5] * 5  # what traders saw before the reverse split
     assert f["raw_close"].to_list()[5:] == [10.0] * 5
+
+
+def test_split_missing_from_the_history_is_repaired() -> None:
+    # a 2-for-1 split on day 5 that the stored history did not apply: the close drops from 100 to 50
+    df = _px([100.0] * 5 + [50.0] * 5).with_columns(
+        pl.Series("splits", [0.0] * 5 + [2.0] + [0.0] * 4)
+    )
+    f = atlas.stock_features(df)
+    assert f["close"].to_list() == [50.0] * 10  # older rows adjusted by us
+    assert f["raw_close"].to_list() == [100.0] * 5 + [50.0] * 5  # what traders saw
+    assert abs(f["volume"][0] - 2e6) < 1e-6
+    # already-adjusted history is left alone
+    g = atlas.stock_features(
+        _px([50.0] * 10).with_columns(pl.Series("splits", [0.0] * 5 + [2.0] + [0.0] * 4))
+    )
+    assert (
+        g["close"].to_list() == [50.0] * 10 and g["raw_close"].to_list() == [100.0] * 5 + [50.0] * 5
+    )
+
+
+def test_entities_do_not_mix_and_entry_is_the_next_open() -> None:
+    a = _px([10.0 + i for i in range(80)], "US:AAA")
+    b = _px([200.0 - i for i in range(80)], "US:BBB").with_columns(
+        (pl.col("close") + 3).alias("open")
+    )
+    df = pl.concat([a, b]).sample(fraction=1.0, shuffle=True, seed=3)  # rows in random order
+    y = atlas.path_labels(atlas.stock_features(df)).sort("entity_id", "as_of")
+    ra = y.filter(pl.col("entity_id") == "US:AAA").row(30, named=True)
+    assert (
+        abs(ra["y_ret1"] - 0.0) < 1e-6
+    )  # open == close for AAA: entry and close are the same price
+    rb = y.filter(pl.col("entity_id") == "US:BBB").row(30, named=True)
+    # BBB: signal close 170, next session open = 169 + 3 = 172, close 169
+    assert abs(rb["y_ret1"] - (169 / 172 - 1)) < 1e-6
+    assert (
+        y.filter(pl.col("entity_id") == "US:AAA")["s_ret1"].drop_nulls().min() > 0
+    )  # never sees BBB's falls
+
+
+def test_fred_is_used_from_the_day_after_publication() -> None:
+    days = [date(2024, 1, 1) + timedelta(days=i) for i in range(5)]
+    px = pl.DataFrame({"entity_id": ["US:SPY"] * 5, "as_of": days, **{c: [0.1] * 5 for c in (
+        "s_dma50", "s_dma200", "s_dhi250", "s_dlo250", "s_ret1", "s_ret5", "s_ret20", "s_vr20", "s_streak", "s_vol20")}})  # fmt: skip
+    vol = pl.DataFrame({"entity_id": [f"IDX:US:{s}" for s in ("VIX", "VIX3M", "VIX9D") for _ in days],
+                        "as_of": days * 3, "close": [20.0] * 15})  # fmt: skip
+    from datetime import datetime
+
+    fred = pl.DataFrame({"entity_id": ["MACRO:FRED:DGS10"], "as_of": [date(2024, 1, 2)], "value": [4.0],
+                         "published_at": [datetime(2024, 1, 3, 23, 0)]})  # fmt: skip
+    m = atlas.market_features(px, vol, fred).sort("as_of")
+    assert (
+        m.filter(pl.col("as_of") == date(2024, 1, 3))["m_y10"][0] is None
+    )  # published that evening
+    assert m.filter(pl.col("as_of") == date(2024, 1, 4))["m_y10"][0] == 4.0
+
+
+def test_search_purges_rows_whose_outcome_crosses_the_period_end() -> None:
+    from mw.research import search
+
+    days = [date(2019, 12, 1) + timedelta(days=i) for i in range(60)]
+    df = pl.DataFrame({"as_of": days})
+    p = {
+        "discovery": (date(2011, 1, 1), date(2019, 12, 31)),
+        "validation": (date(2020, 1, 1), date(2024, 6, 30)),
+    }
+    kept = search.purge(df, "y_ret10", p)["as_of"]
+    assert kept.filter(kept <= date(2019, 12, 31)).max() <= date(2019, 12, 13)
+    assert date(2020, 1, 5) in kept.to_list()
