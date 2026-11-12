@@ -46,9 +46,22 @@ def _ret(n: int) -> pl.Expr:
     return C("close") / C("close").shift(n) - 1
 
 
+def raw_close(df: pl.DataFrame) -> pl.Expr:
+    """Prices are split-adjusted afterwards (a later 1-for-20 reverse split multiplies all older prices by 20),
+    so price LEVELS leak the future. The price traders actually saw = adjusted close x product of the split
+    ratios after that day (needs a `splits` column: ratio on the split day, 0/null = none)."""
+    if "splits" not in df.columns:
+        return C("close")
+    f = pl.when(C("splits").fill_null(0) > 0).then(C("splits")).otherwise(1.0)
+    after = f.reverse().cum_prod().reverse().over(G) / f  # product of ratios strictly after the day
+    return C("close") * after
+
+
 def stock_features(df: pl.DataFrame) -> pl.DataFrame:
-    """df: entity_id, as_of, open, high, low, close, volume (one or many entities). Returns df + s_* columns."""
+    """df: entity_id, as_of, open, high, low, close, volume (+ splits). Returns df + raw_close + s_* columns.
+    Price-level features use raw_close (see raw_close); everything else is scale-free."""
     df = df.sort(G, "as_of")
+    df = df.with_columns(raw_close(df).alias("raw_close"))
     pc = C("close").shift(1)
     tr = pl.max_horizontal(C("high") - C("low"), (C("high") - pc).abs(), (C("low") - pc).abs())
     df = df.with_columns(
@@ -203,8 +216,10 @@ def stock_features(df: pl.DataFrame) -> pl.DataFrame:
         ],  # fmt: skip
         # ---- liquidity / price level
         C("dvol20").log10().alias("s_ldvol"),
-        C("close").log10().alias("s_lprice"),
-        (((C("close") / 10).round(0) * 10 - C("close")).abs() / C("close")).alias("s_round10"),
+        C("raw_close").log10().alias("s_lprice"),
+        (((C("raw_close") / 10).round(0) * 10 - C("raw_close")).abs() / C("raw_close")).alias(
+            "s_round10"
+        ),
     ]
     df = df.with_columns([e.over(G) for e in exprs])
 

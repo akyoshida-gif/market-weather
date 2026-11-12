@@ -57,3 +57,13 @@ def test_labels_unknown_at_the_end_of_data() -> None:
     assert last["y_ret60"] is None or np.isnan(last["y_ret60"])
     # not reached, but the window is incomplete: unknown, not "never"
     assert last["y_up6"] is None or np.isnan(last["y_up6"])
+
+
+def test_price_level_uses_the_price_seen_at_the_time() -> None:
+    # adjusted history of a stock that later did a 1-for-20 reverse split: old prices look 20x higher
+    df = _px([10.0] * 5 + [10.0] * 5).with_columns(
+        pl.Series("splits", [0.0] * 5 + [0.05] + [0.0] * 4)
+    )
+    f = atlas.stock_features(df)
+    assert f["raw_close"].to_list()[:5] == [0.5] * 5  # what traders saw before the reverse split
+    assert f["raw_close"].to_list()[5:] == [10.0] * 5

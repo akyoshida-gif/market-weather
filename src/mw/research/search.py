@@ -56,7 +56,7 @@ def load(
     lo, hi = min(p[0] for p in periods.values()), max(p[1] for p in periods.values())
     st = pl.scan_parquet(f"{atlas_dir}/stocks/*.parquet")
     feats = [c for c in st.collect_schema().names() if c.startswith("s_")]
-    df = (st.filter((C("kind") == "common") & (C("as_of") >= lo) & (C("as_of") <= hi) & (C("dvol20") >= min_dvol) & (C("close") >= 5))
+    df = (st.filter((C("kind") == "common") & (C("as_of") >= lo) & (C("as_of") <= hi) & (C("dvol20") >= min_dvol) & (C("raw_close") >= 5))
           .select("entity_id", "as_of", *feats, C(label).alias("_y")).filter(C("_y").is_finite())
           .with_columns((C("_y") - C("_y").mean().over("as_of")).alias("y")).drop("_y"))  # fmt: skip
     if every > 1:

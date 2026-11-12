@@ -3,7 +3,8 @@
 Usage: python -m jobs.atlas_build --px PX --uni UNI --vol VOL --fred FRED --out DIR
 (local parquet copies of prices_daily, the universe, vol_indices and fred).
 Writes DIR/stocks/part_NNN.parquet (one per entity chunk) and DIR/market.parquet.
-Stored rows: close >= 3, 20-day dollar volume >= $2M, about 1 year of history,
+Stored rows: actual (not split-adjusted) close >= 3, 20-day dollar volume >= $2M,
+about 1 year of history,
 no data error in the last 20 sessions.
 """
 
@@ -31,7 +32,7 @@ def main() -> None:
     out = Path(a.out)
     (out / "stocks").mkdir(parents=True, exist_ok=True)
     uni = pl.read_parquet(a.uni).select("entity_id", "kind")
-    ohlcv = ["entity_id", "as_of", "open", "high", "low", "close", "volume"]
+    ohlcv = ["entity_id", "as_of", "open", "high", "low", "close", "volume", "splits"]
     px = pl.scan_parquet(a.px).select(ohlcv).join(uni.lazy(), on="entity_id", how="inner").collect()
     ents = px["entity_id"].unique().sort().to_list()
     print(f"{len(ents)} 銘柄・{px.height:,} 行", flush=True)
@@ -42,9 +43,10 @@ def main() -> None:
         part = px.filter(C("entity_id").is_in(ents[i : i + a.chunk]))
         kind = part.select("entity_id", "kind").unique()
         df = atlas.past_relative(atlas.stock_features(part.drop("kind")))
+        df = df.drop("splits")
         df = atlas.path_labels(df)
         df = df.filter(
-            (C("close") >= 3) & (C("dvol20") >= 2e6) & C("s_ret250").is_not_null() & ~C("bad20")
+            (C("raw_close") >= 3) & (C("dvol20") >= 2e6) & C("s_ret250").is_not_null() & ~C("bad20")
         )
         df = df.join(kind, on="entity_id", how="left").drop("bad20")
         fl = [c for c, t in df.schema.items() if t == pl.Float64]
