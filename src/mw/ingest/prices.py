@@ -146,6 +146,17 @@ def stamp(
     )
 
 
+FULL_START = date(2010, 1, 1)  # start of the stored history (backfill)
+
+
+def split_entities(silver: pl.DataFrame) -> list[str]:
+    """Entities with a split (ratio != 1) among the rows just downloaded."""
+    if "splits" not in silver.columns or silver.height == 0:
+        return []
+    s = pl.col("splits").fill_null(0)
+    return sorted(silver.filter((s > 0) & (s != 1))["entity_id"].unique().to_list())
+
+
 def _is_session(market: str, d: date) -> bool:
     return bool(sessions(market, d, d))
 
@@ -158,7 +169,14 @@ def ingest(
     end: date,
     downloader: Downloader = yf_download,
     chunk: int = 200,
+    refetch_splits: bool = True,
 ) -> dict[str, Any]:
+    """Download [start, end] and upsert.
+
+    The provider adjusts the whole history for a split, but a short daily window only rewrites
+    its own rows, so older stored rows would stay unadjusted. When the window contains a split,
+    the full history of that stock is downloaded again (refetch_splits).
+    """
     mapping = dict(
         zip(universe["yahoo_symbol"].to_list(), universe["entity_id"].to_list(), strict=True)
     )
@@ -184,6 +202,12 @@ def ingest(
     years = upsert_timeseries(storage, "prices_daily", market, silver)
     got = set(silver["entity_id"].unique().to_list())
     missing = [e for e in mapping.values() if e not in got]
+    refetched: list[str] = []
+    split_ids = split_entities(silver)
+    if refetch_splits and split_ids and start > FULL_START:
+        sub = universe.filter(pl.col("entity_id").is_in(split_ids))
+        ingest(storage, market, sub, FULL_START, end, downloader, chunk, refetch_splits=False)
+        refetched = split_ids
     return {
         "symbols": len(mapping),
         "with_data": len(got),
@@ -192,4 +216,5 @@ def ingest(
         "rows": silver.height,
         "years": sorted(years),
         "errors": errors,
+        "refetched_for_split": refetched,
     }

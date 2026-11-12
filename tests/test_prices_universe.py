@@ -77,3 +77,33 @@ def test_prices_ingest_drops_unclosed_session(tmp_path, monkeypatch):
     assert df.filter(pl.col("as_of") == date(2026, 10, 23))["published_at"][0] == datetime(
         2026, 10, 23, 20, 30, tzinfo=UTC
     )
+
+
+def test_a_split_in_the_daily_window_refetches_the_full_history(tmp_path, monkeypatch):
+    calls: list[tuple[list[str], date]] = []
+
+    def dl(symbols, start, end):
+        calls.append((sorted(symbols), start))
+        idx = pd.to_datetime(["2026-10-22", "2026-10-23"])
+        cols = pd.MultiIndex.from_product([list(prices.FIELDS), symbols])
+        df = pd.DataFrame([[50.0] * len(cols)] * 2, index=idx, columns=cols)
+        df.loc[:, ("Stock Splits", slice(None))] = 0.0
+        if "AAA" in symbols:
+            df.loc[pd.Timestamp("2026-10-23"), ("Stock Splits", "AAA")] = 2.0  # 2-for-1 split
+        return df
+
+    real = prices.datetime
+
+    class FakeDT(real):
+        @classmethod
+        def now(cls, tz=None):
+            return real(2026, 10, 26, 22, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(prices, "datetime", FakeDT)
+    monkeypatch.setattr(prices.time, "sleep", lambda s: None)
+    s = GuardedStorage(LocalFS(tmp_path), GuardSettings())
+    uni = pl.DataFrame({"yahoo_symbol": ["AAA", "BBB"], "entity_id": ["US:AAA", "US:BBB"]})
+    r = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
+    assert r["refetched_for_split"] == ["US:AAA"]
+    assert calls[-1] == (["AAA"], prices.FULL_START)  # only the split stock, whole history
+    assert len(calls) == 2
