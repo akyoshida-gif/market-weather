@@ -55,6 +55,29 @@ SPLIT_MIN = np.log(
 )  # smaller ratios (spin-offs etc.) are never repaired: too close to normal daily moves
 
 
+def split_step(c: np.ndarray, d: int, lr: float) -> int | None:
+    """Index k (d - SPLIT_LOOKBACK .. d) where the unadjusted step of a split with log ratio lr sits, or None if
+    the history is already adjusted. The step is judged on the median of the 3 closes before k against the median
+    of the 3 closes from k on, so a single bad print (46 -> 2613 -> 39) is not mistaken for a split. Among the
+    days that pass, the one whose own close-to-close move matches best is the step (the medians also pass one
+    day before / after the true step)."""
+    best, best_err = None, np.inf
+    for k in range(max(1, d - SPLIT_LOOKBACK), d + 1):
+        before, after = c[max(0, k - 3) : k], c[k : k + 3]
+        if len(before) == 0 or len(after) == 0:
+            continue
+        med_err = abs(np.log(np.median(after) / np.median(before)) + lr)
+        day_err = abs(np.log(c[k] / c[k - 1]) + lr)
+        if (
+            np.isfinite(med_err)
+            and med_err < 0.25 * abs(lr)
+            and np.isfinite(day_err)
+            and day_err < best_err
+        ):
+            best, best_err = k, day_err
+    return best
+
+
 def repair_splits(df: pl.DataFrame) -> pl.DataFrame:
     """The daily price job refetches the last 7 days, so a split that happened after the backfill can be missing
     from the stored history. The refetch rewrites the last few rows already adjusted, so the unadjusted step sits
@@ -72,21 +95,14 @@ def repair_splits(df: pl.DataFrame) -> pl.DataFrame:
     for _, g in df.group_by(G, maintain_order=True):
         c = g["close"].to_numpy().astype(float)
         s = g["splits"].fill_null(0).to_numpy().astype(float)
-        n = len(c)
-        fix = np.ones(n)
-        lr_day = np.full(n, np.nan)
-        lr_day[1:] = np.log(c[1:] / c[:-1])
+        fix = np.ones(len(c))
         for d in np.flatnonzero(s > 0):
             lr = np.log(s[d])
             if abs(lr) < SPLIT_MIN:
                 continue
-            ks = np.arange(max(1, d - SPLIT_LOOKBACK), d + 1)
-            err = np.abs(lr_day[ks] + lr)
-            ok = np.isfinite(err) & (err < 0.25 * abs(lr))
-            if not ok.any():
-                continue  # already adjusted
-            k = ks[ok][np.argmin(err[ok])]
-            fix[:k] *= s[d]
+            k = split_step(c, d, lr)
+            if k is not None:
+                fix[:k] *= s[d]
         fix_parts.append(fix)
     fix_all = np.concatenate(fix_parts)
     return (

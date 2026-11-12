@@ -171,3 +171,11 @@ def test_label_sessions() -> None:
         search.label_sessions("y_up1_5") == atlas.FWD
         and search.label_sessions("y_dn0_5") == atlas.FWD
     )
+
+
+def test_a_single_bad_print_is_not_taken_for_a_split() -> None:
+    # adjusted history with one wrong print (46 -> 2613 -> 39) and a 1-for-57 reverse split a few days later
+    c = [46.0] * 10 + [2613.0] + [39.0] * 6
+    s = [0.0] * 14 + [1 / 57] + [0.0] * 2
+    f = atlas.stock_features(_px(c).with_columns(pl.Series("splits", s)))
+    assert f["close"].to_list()[:10] == [46.0] * 10  # not multiplied by 57

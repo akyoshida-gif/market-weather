@@ -22,15 +22,11 @@ def count(df: pl.DataFrame) -> dict[str, int]:
     for _, g in df.group_by("entity_id", maintain_order=True):
         c = g["close"].to_numpy().astype(float)
         sp = g["splits"].fill_null(0).to_numpy().astype(float)
-        lr = np.full(len(c), np.nan)
-        lr[1:] = np.log(c[1:] / c[:-1])
         for d in np.flatnonzero(sp > 0):
             r = np.log(sp[d])
             if abs(r) < atlas.SPLIT_MIN:
                 continue
-            ks = np.arange(max(1, d - atlas.SPLIT_LOOKBACK), d + 1)
-            bad = np.isfinite(lr[ks]) & (np.abs(lr[ks] + r) < 0.25 * abs(r))
-            key = "反映済み" if not bad.any() else "未反映"
+            key = "反映済み" if atlas.split_step(c, d, r) is None else "未反映"
             out[key] = out.get(key, 0) + 1
     return out
 
