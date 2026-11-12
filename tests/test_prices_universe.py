@@ -110,7 +110,7 @@ def test_a_split_in_the_daily_window_refetches_the_full_history(tmp_path, monkey
     assert r["refetch_for_split"]["stocks"] == ["US:AAA"]
     assert calls[-1] == (["AAA"], prices.FULL_START)  # only the split stock, whole history
     assert len(calls) == 2
-    # the split stays in the 7-day window for a week: the next runs do not refetch again
+    # the split (10/23) is 3 days old at the end date: marked done, so the next runs do not refetch again
     r2 = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
     assert r2["refetch_for_split"] == {"already_done": 1} and len(calls) == 3
     # a manual backfill does not add a second full download
@@ -153,3 +153,34 @@ def test_a_failed_refetch_keeps_the_daily_rows(tmp_path, monkeypatch):
     r = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
     assert r["rows"] == 1 and "error" in r["refetch_for_split"]
     assert not s.exists(prices.refetch_key("US"))  # nothing marked done: retried next run
+
+
+def test_a_fresh_split_is_refetched_again_until_it_settles(tmp_path, monkeypatch):
+    calls: list[date] = []
+
+    def dl(symbols, start, end):
+        calls.append(start)
+        idx = pd.to_datetime(["2026-10-23", "2026-10-26"])
+        cols = pd.MultiIndex.from_product([list(prices.FIELDS), symbols])
+        df = pd.DataFrame([[50.0] * len(cols)] * 2, index=idx, columns=cols)
+        df.loc[:, ("Stock Splits", slice(None))] = 0.0
+        df.loc[pd.Timestamp("2026-10-26"), ("Stock Splits", "AAA")] = 2.0  # split on the last day
+        return df
+
+    real = prices.datetime
+    tick = {"s": 0}
+
+    class FakeDT(real):
+        @classmethod
+        def now(cls, tz=None):
+            tick["s"] += 1
+            return real(2026, 10, 26, 22, 0, tzinfo=UTC) + timedelta(seconds=tick["s"])
+
+    monkeypatch.setattr(prices, "datetime", FakeDT)
+    monkeypatch.setattr(prices.time, "sleep", lambda s: None)
+    s = GuardedStorage(LocalFS(tmp_path), GuardSettings())
+    uni = pl.DataFrame({"yahoo_symbol": ["AAA"], "entity_id": ["US:AAA"]})
+    for _ in range(2):
+        r = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
+        assert r["refetch_for_split"]["stocks"] == ["US:AAA"] and "_ids" not in r
+    assert calls.count(prices.FULL_START) == 2  # not marked done yet: refetched on both runs

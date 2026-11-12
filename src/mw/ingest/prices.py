@@ -147,6 +147,7 @@ def stamp(
 
 
 FULL_START = date(2010, 1, 1)  # start of the stored history (backfill)
+SPLIT_SETTLE = timedelta(days=3)  # refetch again until the split is this old
 
 
 def split_entities(silver: pl.DataFrame) -> list[str]:
@@ -199,9 +200,14 @@ def refetch_split_history(
     except Exception as e:  # keep the daily rows; try again on the next run
         log.warning("split refetch failed: %s", e)
         return {"stocks": ids, "error": f"{type(e).__name__}: {e}"[:200]}
-    got = set(r.get("with_data_ids", []))
-    ok = new.filter(pl.col("entity_id").is_in(sorted(got)))
-    storage.write_parquet(key, pl.concat([done, ok]).unique().sort("entity_id", "as_of"))
+    got = set(r.pop("_ids", []))
+    # mark done only when the split is a few days old: right after the split the provider may not
+    # have adjusted the older history yet, so those runs refetch again
+    settled = new.filter(
+        pl.col("entity_id").is_in(sorted(got)) & (pl.col("as_of") <= end - SPLIT_SETTLE)
+    )
+    if settled.height:
+        storage.write_parquet(key, pl.concat([done, settled]).unique().sort("entity_id", "as_of"))
     return {"stocks": ids, "rows": r["rows"], "missing": r["missing"], "errors": r["errors"]}
 
 
@@ -250,17 +256,18 @@ def ingest(
     years = upsert_timeseries(storage, "prices_daily", market, silver)
     got = set(silver["entity_id"].unique().to_list())
     missing = [e for e in mapping.values() if e not in got]
-    refetch: dict[str, Any] = {}
-    if refetch_splits and start > FULL_START:
-        refetch = refetch_split_history(storage, market, universe, silver, end, downloader, chunk)
-    return {
+    summary = {
         "symbols": len(mapping),
         "with_data": len(got),
         "missing": len(missing),
         "missing_sample": missing[:20],
         "rows": silver.height,
-        "with_data_ids": sorted(got),
         "years": sorted(years),
         "errors": errors,
-        "refetch_for_split": refetch,
     }
+    if not refetch_splits:  # inner call from refetch_split_history: hand the ids back (not logged)
+        return {**summary, "_ids": sorted(got)}
+    refetch: dict[str, Any] = {}
+    if start > FULL_START:
+        refetch = refetch_split_history(storage, market, universe, silver, end, downloader, chunk)
+    return {**summary, "refetch_for_split": refetch}
