@@ -19,6 +19,10 @@ Without R2 secrets, the `smoke` workflow falls back to the local backend.
 ## Re-run / backfill
 All jobs are date-parameterized and idempotent. Use Actions → workflow → "Run workflow" with `date`.
 
+## Stock splits in prices (BACKLOG D5)
+- The daily job rewrites only the last 7 days, so after a split older stored rows could stay unadjusted. Since 2026-11-12 a split seen in the window triggers a full-history refetch of that stock (once per split; done pairs are kept in `registry/split_refetch/market=US|JP.parquet`). A failed refetch does not fail the job; it shows as `refetch_for_split.error` in `registry/runs` and is retried on the next run.
+- One-off repair: Actions → prices → Run workflow, set `market` and `repair_splits_since` (e.g. 2026-09-01). Avoid the scheduled times (US 21:30 / 01:30 / 04:30 UTC, JP 07:30 / 10:30 UTC); runs of one market queue anyway. Check `split_stocks` and `errors` in `registry/runs`. If it stops halfway (some years rewritten, others not), run it again.
+
 ## Cost guard (ADR-0001)
 `registry/storage_usage.json` holds monthly Class A/B op counts and last known bucket size.
 Above soft limits, non-exempt writes raise `StorageGuardError` (ledger/ and registry/ exempt).

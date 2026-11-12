@@ -25,7 +25,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: prices-${{ inputs.market || github.event.schedule }}
+  # one group per market for scheduled AND manual runs: two runs rewriting the same year file would lose rows
+  group: prices-${{ inputs.market || ((github.event.schedule == '30 7 * * 1-5' || github.event.schedule == '30 10 * * 1-5') && 'JP' || 'US') }}
   cancel-in-progress: false
 jobs:
   prices:

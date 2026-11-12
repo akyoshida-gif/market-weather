@@ -83,7 +83,8 @@ def repair_splits(
     if sub.height == 0:
         return {"split_stocks": 0}
     r = prices.ingest(storage, market, sub, prices.FULL_START, end, refetch_splits=False)
-    return {"split_stocks": sub.height, "rows": r["rows"], "missing": r["missing"]}
+    return {"found": len(ids), "not_in_universe": len(ids) - sub.height, "split_stocks": sub.height,
+            "rows": r["rows"], "missing": r["missing"], "errors": r["errors"]}  # fmt: skip
 
 
 def main() -> int:
@@ -112,7 +113,11 @@ def main() -> int:
             failed = True
     try:
         with job_run(
-            storage, f"prices_{args.market.lower()}", start=str(args.start), days=args.days
+            storage,
+            f"prices_{args.market.lower()}",
+            start=str(args.start),
+            days=args.days,
+            repair_splits_since=str(args.repair_splits_since),
         ) as s:
             uni = latest_universe(storage, args.market)
             if args.limit:
@@ -124,7 +129,10 @@ def main() -> int:
                 )
             else:
                 start = args.start or end - timedelta(days=args.days)
-                s["result"] = prices.ingest(storage, args.market, uni, start, end)
+                # a manual backfill (--start) already downloads the history: no extra split refetch
+                s["result"] = prices.ingest(
+                    storage, args.market, uni, start, end, refetch_splits=args.start is None
+                )
     except Exception:
         failed = True
     http.close()

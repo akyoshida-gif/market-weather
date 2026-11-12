@@ -157,6 +157,54 @@ def split_entities(silver: pl.DataFrame) -> list[str]:
     return sorted(silver.filter((s > 0) & (s != 1))["entity_id"].unique().to_list())
 
 
+def split_events(silver: pl.DataFrame) -> pl.DataFrame:
+    """(entity_id, as_of) of the splits (ratio != 1) among the rows just downloaded."""
+    if "splits" not in silver.columns or silver.height == 0:
+        return pl.DataFrame(schema={"entity_id": pl.String, "as_of": pl.Date})
+    s = pl.col("splits").fill_null(0)
+    return silver.filter((s > 0) & (s != 1)).select("entity_id", "as_of").unique().sort("entity_id")
+
+
+def refetch_key(market: str) -> str:
+    return f"registry/split_refetch/market={market}.parquet"
+
+
+def refetch_split_history(
+    storage: GuardedStorage,
+    market: str,
+    universe: pl.DataFrame,
+    silver: pl.DataFrame,
+    end: date,
+    downloader: Downloader,
+    chunk: int,
+) -> dict[str, Any]:
+    """Download the whole history again for splits seen for the first time.
+
+    A split stays in the 7-day window for about a week (3 US runs a day), so (entity, split day)
+    pairs already refetched are remembered in the registry and skipped. A failure here never
+    fails the daily job; it is reported and retried on the next run.
+    """
+    ev = split_events(silver)
+    if ev.height == 0:
+        return {}
+    key = refetch_key(market)
+    done = storage.read_parquet(key) if storage.exists(key) else ev.clear()
+    new = ev.join(done, on=["entity_id", "as_of"], how="anti")
+    if new.height == 0:
+        return {"already_done": ev.height}
+    ids = sorted(new["entity_id"].unique().to_list())
+    sub = universe.filter(pl.col("entity_id").is_in(ids))
+    try:
+        r = ingest(storage, market, sub, FULL_START, end, downloader, chunk, refetch_splits=False)
+    except Exception as e:  # keep the daily rows; try again on the next run
+        log.warning("split refetch failed: %s", e)
+        return {"stocks": ids, "error": f"{type(e).__name__}: {e}"[:200]}
+    got = set(r.get("with_data_ids", []))
+    ok = new.filter(pl.col("entity_id").is_in(sorted(got)))
+    storage.write_parquet(key, pl.concat([done, ok]).unique().sort("entity_id", "as_of"))
+    return {"stocks": ids, "rows": r["rows"], "missing": r["missing"], "errors": r["errors"]}
+
+
 def _is_session(market: str, d: date) -> bool:
     return bool(sessions(market, d, d))
 
@@ -202,19 +250,17 @@ def ingest(
     years = upsert_timeseries(storage, "prices_daily", market, silver)
     got = set(silver["entity_id"].unique().to_list())
     missing = [e for e in mapping.values() if e not in got]
-    refetched: list[str] = []
-    split_ids = split_entities(silver)
-    if refetch_splits and split_ids and start > FULL_START:
-        sub = universe.filter(pl.col("entity_id").is_in(split_ids))
-        ingest(storage, market, sub, FULL_START, end, downloader, chunk, refetch_splits=False)
-        refetched = split_ids
+    refetch: dict[str, Any] = {}
+    if refetch_splits and start > FULL_START:
+        refetch = refetch_split_history(storage, market, universe, silver, end, downloader, chunk)
     return {
         "symbols": len(mapping),
         "with_data": len(got),
         "missing": len(missing),
         "missing_sample": missing[:20],
         "rows": silver.height,
+        "with_data_ids": sorted(got),
         "years": sorted(years),
         "errors": errors,
-        "refetched_for_split": refetched,
+        "refetch_for_split": refetch,
     }

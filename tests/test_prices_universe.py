@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import polars as pl
@@ -94,6 +94,53 @@ def test_a_split_in_the_daily_window_refetches_the_full_history(tmp_path, monkey
 
     real = prices.datetime
 
+    tick = {"s": 0}
+
+    class FakeDT(real):
+        @classmethod
+        def now(cls, tz=None):
+            tick["s"] += 1  # each run gets its own time (raw files are named by it)
+            return real(2026, 10, 26, 22, 0, tzinfo=UTC) + timedelta(seconds=tick["s"])
+
+    monkeypatch.setattr(prices, "datetime", FakeDT)
+    monkeypatch.setattr(prices.time, "sleep", lambda s: None)
+    s = GuardedStorage(LocalFS(tmp_path), GuardSettings())
+    uni = pl.DataFrame({"yahoo_symbol": ["AAA", "BBB"], "entity_id": ["US:AAA", "US:BBB"]})
+    r = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
+    assert r["refetch_for_split"]["stocks"] == ["US:AAA"]
+    assert calls[-1] == (["AAA"], prices.FULL_START)  # only the split stock, whole history
+    assert len(calls) == 2
+    # the split stays in the 7-day window for a week: the next runs do not refetch again
+    r2 = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
+    assert r2["refetch_for_split"] == {"already_done": 1} and len(calls) == 3
+    # a manual backfill does not add a second full download
+    prices.ingest(
+        s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl, refetch_splits=False
+    )
+    assert len(calls) == 4
+
+
+def test_ratio_one_or_missing_is_not_a_split():
+    df = pl.DataFrame({"entity_id": ["US:A", "US:B", "US:C", "US:D"], "as_of": [date(2026, 1, 2)] * 4,
+                       "splits": [1.0, None, 0.0, 0.1]})  # fmt: skip
+    assert prices.split_events(df)["entity_id"].to_list() == ["US:D"]  # 1-for-10 reverse split
+
+
+def test_a_failed_refetch_keeps_the_daily_rows(tmp_path, monkeypatch):
+    state = {"n": 0}
+
+    def dl(symbols, start, end):
+        state["n"] += 1
+        if state["n"] > 1:
+            raise RuntimeError("provider down")
+        idx = pd.to_datetime(["2026-10-22"])
+        cols = pd.MultiIndex.from_product([list(prices.FIELDS), symbols])
+        df = pd.DataFrame([[50.0] * len(cols)], index=idx, columns=cols)
+        df.loc[:, ("Stock Splits", slice(None))] = 2.0
+        return df
+
+    real = prices.datetime
+
     class FakeDT(real):
         @classmethod
         def now(cls, tz=None):
@@ -102,8 +149,7 @@ def test_a_split_in_the_daily_window_refetches_the_full_history(tmp_path, monkey
     monkeypatch.setattr(prices, "datetime", FakeDT)
     monkeypatch.setattr(prices.time, "sleep", lambda s: None)
     s = GuardedStorage(LocalFS(tmp_path), GuardSettings())
-    uni = pl.DataFrame({"yahoo_symbol": ["AAA", "BBB"], "entity_id": ["US:AAA", "US:BBB"]})
+    uni = pl.DataFrame({"yahoo_symbol": ["AAA"], "entity_id": ["US:AAA"]})
     r = prices.ingest(s, "US", uni, date(2026, 10, 19), date(2026, 10, 26), downloader=dl)
-    assert r["refetched_for_split"] == ["US:AAA"]
-    assert calls[-1] == (["AAA"], prices.FULL_START)  # only the split stock, whole history
-    assert len(calls) == 2
+    assert r["rows"] == 1 and "error" in r["refetch_for_split"]
+    assert not s.exists(prices.refetch_key("US"))  # nothing marked done: retried next run
