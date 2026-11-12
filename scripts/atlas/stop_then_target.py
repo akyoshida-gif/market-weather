@@ -1,8 +1,11 @@
 """After the stop is touched, how often does the price still reach the target? (all liquid common stocks)"""
 
 import sys
+from datetime import date
 
 import polars as pl
+
+from mw.research import search
 
 C = pl.col
 sys.stdout.reconfigure(encoding="utf-8")
@@ -14,12 +17,15 @@ df = (
         (C("kind") == "common")
         & (C("dvol20") >= 5e6)
         & (C("raw_close") >= 5)
-        & (C("as_of") <= pl.date(2024, 6, 30))
+        # purge: the 60-session paths must end before the untouched period starting 2024-07
+        & (C("as_of") <= date(2024, 6, 30) - search.label_gap("y_up1"))
     )
     .select("as_of", *[f"y_up{u}" for u in ups], *[f"y_dn{d}" for d in dns])
     .collect()
 )
-print(f"{df.height:,} 件（2011〜2024年6月、翌日の始値で買った場合。単位は買った日の ATR）\n")
+print(
+    f"{df.height:,} 件（2011〜2024年3月（60日の道筋が2024年6月までに終わる行）、翌日の始値で買った場合。単位は買った日の ATR）\n"
+)
 print(
     "損切り幅 → 利確幅 | 先に利確 | 先に損切り | 損切りの後に利確まで戻った（損切りに掛かった中の割合）| 60日で両方届かず"
 )

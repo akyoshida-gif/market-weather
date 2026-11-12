@@ -8,6 +8,8 @@ from datetime import date
 import numpy as np
 import polars as pl
 
+from mw.research import search
+
 C = pl.col
 sys.stdout.reconfigure(encoding="utf-8")
 A = sys.argv[1]
@@ -31,6 +33,14 @@ ym = (asof.dt.year().cast(pl.Int64) * 12 + asof.dt.month().cast(pl.Int64)).to_nu
 mi = np.unique(ym, return_inverse=True)[1]
 nm = mi.max() + 1
 Y = {lb: df[lb].to_numpy().astype(np.float64) for lb in labels}
+# purge: an outcome must end inside its own period (no validation prices in discovery, nothing after 2024-06)
+for lb in labels:
+    gap = search.label_gap(lb)
+    cross = ((asof > date(2019, 12, 31) - gap) & (asof <= date(2019, 12, 31))) | (
+        asof > date(2024, 6, 30) - gap
+    )
+    Y[lb][cross.to_numpy()] = np.nan
+keys = df["as_of"]
 
 
 def mstat(mask: np.ndarray, y: np.ndarray) -> tuple[float, float, int, float]:
@@ -51,7 +61,9 @@ def mstat(mask: np.ndarray, y: np.ndarray) -> tuple[float, float, int, float]:
 
 rows = []
 for f in feats:
-    x = base.select(f).collect()[f].cast(pl.Float64).to_numpy()
+    col = base.select("as_of", f).collect()
+    assert col["as_of"].equals(keys), "row order changed between reads"
+    x = col[f].cast(pl.Float64).to_numpy()
     xd = x[disc & np.isfinite(x)]
     if len(xd) < 10000:
         continue

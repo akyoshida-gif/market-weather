@@ -135,3 +135,39 @@ def test_search_purges_rows_whose_outcome_crosses_the_period_end() -> None:
     kept = search.purge(df, "y_ret10", p)["as_of"]
     assert kept.filter(kept <= date(2019, 12, 31)).max() <= date(2019, 12, 13)
     assert date(2020, 1, 5) in kept.to_list()
+
+
+def test_repair_finds_the_step_before_the_split_day_and_reverse_splits() -> None:
+    # 2-for-1 on day 8, but the refetch already rewrote days 4..7: the step sits on day 4
+    c = [100.0] * 4 + [50.0] * 8
+    s = [0.0] * 8 + [2.0] + [0.0] * 3
+    f = atlas.stock_features(_px(c).with_columns(pl.Series("splits", s)))
+    assert f["close"].to_list() == [50.0] * 12
+    assert f["raw_close"].to_list() == [100.0] * 8 + [50.0] * 4
+    # 1-for-20 reverse split not applied: 0.5 -> 10 on the split day
+    g = atlas.stock_features(
+        _px([0.5] * 5 + [10.0] * 5).with_columns(
+            pl.Series("splits", [0.0] * 5 + [0.05] + [0.0] * 4)
+        )
+    )
+    assert [round(x, 6) for x in g["close"].to_list()] == [10.0] * 10
+    assert [round(x, 6) for x in g["raw_close"].to_list()] == [0.5] * 5 + [10.0] * 5
+
+
+def test_small_ratios_are_never_repaired() -> None:
+    # an adjusted spin-off (ratio 1.04) on a day the stock simply fell 3%
+    c = [100.0] * 5 + [97.0] * 5
+    f = atlas.stock_features(
+        _px(c).with_columns(pl.Series("splits", [0.0] * 5 + [1.04] + [0.0] * 4))
+    )
+    assert f["close"].to_list() == c
+
+
+def test_label_sessions() -> None:
+    from mw.research import search
+
+    assert search.label_sessions("y_ret10") == 10 and search.label_sessions("y_mfe60") == 60
+    assert (
+        search.label_sessions("y_up1_5") == atlas.FWD
+        and search.label_sessions("y_dn0_5") == atlas.FWD
+    )

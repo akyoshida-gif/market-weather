@@ -1,5 +1,5 @@
 """Walk-forward: bundle all weak signals with LightGBM. Train on years before Y (10-session gap), predict year Y.
-Usage: python ml_wf.py <atlas_dir> <label> <every>"""
+Usage: python scripts/atlas/ml_walkforward.py <atlas_dir> <label> <every>"""
 
 import sys
 import time
@@ -38,19 +38,18 @@ params = {
     "verbose": -1,
     "num_threads": 8,
 }
-# clip the target so a few huge moves do not drive the trees
-yc = np.clip(y, np.quantile(y, 0.01), np.quantile(y, 0.99))
 pred = np.full(len(y), np.nan)
 imp = np.zeros(len(names))
 for Y in range(2014, 2025):
-    cut = np.datetime64(date(Y, 1, 1)) - np.timedelta64(
-        20, "D"
-    )  # gap so 10-session outcomes do not overlap
+    # gap so the outcomes of the last training rows end before the predicted year starts
+    cut = np.datetime64(date(Y, 1, 1)) - np.timedelta64(search.label_gap(label).days, "D")
     tr = asof < cut
     te = yr == Y
     if Y == 2024:
         te &= asof <= np.datetime64(date(2024, 6, 30))
-    m = lgb.train(params, lgb.Dataset(X[tr], yc[tr]), num_boost_round=300)
+    # clip the target (from the training rows only) so a few huge moves do not drive the trees
+    lo_q, hi_q = np.quantile(y[tr], [0.01, 0.99])
+    m = lgb.train(params, lgb.Dataset(X[tr], np.clip(y[tr], lo_q, hi_q)), num_boost_round=300)
     pred[te] = m.predict(X[te])
     imp += m.feature_importance("gain")
     print(f"  {Y} 学習 {tr.sum():,} 行 → 予測 {te.sum():,} 行 {time.time() - t0:.0f}秒", flush=True)
@@ -94,5 +93,4 @@ for nm, col in (("一番上の組", "top"), ("上−下", None)):
 print("\n効いた数値の上位25：")
 for k in np.argsort(-imp)[:25]:
     print(f"  {names[k]:<26} {imp[k] / imp.sum() * 100:5.1f}%")
-res.write_parquet(A + f"/ml_{label}.parquet")
 print(f"合計 {time.time() - t0:.0f}秒")

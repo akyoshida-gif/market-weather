@@ -49,26 +49,54 @@ def _ret(n: int) -> pl.Expr:
     return C("close") / C("close").shift(n) - 1
 
 
+SPLIT_LOOKBACK = 10  # sessions before the split day where the unadjusted step may sit
+SPLIT_MIN = np.log(
+    1.25
+)  # smaller ratios (spin-offs etc.) are never repaired: too close to normal daily moves
+
+
 def repair_splits(df: pl.DataFrame) -> pl.DataFrame:
-    """The daily price job refetches only the last few days, so a split that happened after the backfill can be
-    missing from the stored history: on the split day the close jumps by 1/ratio. Detect those days (the jump
-    matches 1/ratio better than 'no jump') and adjust the older rows ourselves (prices / ratio, volume x ratio),
-    the same way the data source adjusts history."""
+    """The daily price job refetches the last 7 days, so a split that happened after the backfill can be missing
+    from the stored history. The refetch rewrites the last few rows already adjusted, so the unadjusted step sits
+    on the split day OR up to SPLIT_LOOKBACK sessions before it (where the refetched range starts). For every
+    split with |ln ratio| >= ln 1.25, find the day in that window whose close-to-close move matches 1/ratio
+    (within 25% of |ln ratio| in log terms) and adjust all rows before it (prices / ratio, volume x ratio), the
+    same way the data source adjusts history. No matching step = the history is already adjusted."""
     if "splits" not in df.columns:
         return df
     df = df.sort(G, "as_of")
-    ratio = C("splits").fill_null(0)
-    r = C("close") / C("close").shift(1).over(G)
-    unadj = (ratio > 0) & (ratio != 1) & ((r * ratio - 1).abs() < (r - 1).abs())
-    g = pl.when(unadj.fill_null(False)).then(ratio).otherwise(1.0)
-    fix = (g.reverse().cum_prod().reverse().over(G) / g).alias(
-        "_fix"
-    )  # product of missing ratios after the day
-    df = df.with_columns(fix)
-    return df.with_columns(
-        *[(C(k) / C("_fix")).alias(k) for k in ("open", "high", "low", "close")],
-        (C("volume") * C("_fix")).alias("volume"),
-    ).drop("_fix")
+    s_all = df["splits"].fill_null(0).to_numpy()
+    if not ((s_all > 0) & (np.abs(np.log(np.where(s_all > 0, s_all, 1.0))) >= SPLIT_MIN)).any():
+        return df
+    fix_parts = []
+    for _, g in df.group_by(G, maintain_order=True):
+        c = g["close"].to_numpy().astype(float)
+        s = g["splits"].fill_null(0).to_numpy().astype(float)
+        n = len(c)
+        fix = np.ones(n)
+        lr_day = np.full(n, np.nan)
+        lr_day[1:] = np.log(c[1:] / c[:-1])
+        for d in np.flatnonzero(s > 0):
+            lr = np.log(s[d])
+            if abs(lr) < SPLIT_MIN:
+                continue
+            ks = np.arange(max(1, d - SPLIT_LOOKBACK), d + 1)
+            err = np.abs(lr_day[ks] + lr)
+            ok = np.isfinite(err) & (err < 0.25 * abs(lr))
+            if not ok.any():
+                continue  # already adjusted
+            k = ks[ok][np.argmin(err[ok])]
+            fix[:k] *= s[d]
+        fix_parts.append(fix)
+    fix_all = np.concatenate(fix_parts)
+    return (
+        df.with_columns(pl.Series("_fix", fix_all))
+        .with_columns(
+            *[(C(k) / C("_fix")).alias(k) for k in ("open", "high", "low", "close")],
+            (C("volume") * C("_fix")).alias("volume"),
+        )
+        .drop("_fix")
+    )
 
 
 def raw_close(df: pl.DataFrame) -> pl.Expr:
@@ -491,7 +519,7 @@ def market_features(px: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> 
     # latest revision, not the first print (revised series such as NFCI read slightly better than they were).
     for sid, name in series.items():
         s = (fred.filter(C(G) == f"MACRO:FRED:{sid}").select((C("published_at").dt.date() + pl.duration(days=1)).alias("known"), C("value").alias(name))
-             .drop_nulls().sort("known").unique("known", keep="last").sort("known"))  # fmt: skip
+             .drop_nulls().sort("known", maintain_order=True).unique("known", keep="last", maintain_order=True))  # fmt: skip
         if s.height == 0:
             continue
         out = (

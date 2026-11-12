@@ -75,13 +75,27 @@ def load(
     return purge(df, label, periods), feats + mf
 
 
+def label_sessions(label: str) -> int:
+    """How many sessions after the signal day an outcome column looks at."""
+    from mw.research import atlas
+
+    if label.startswith(("y_up", "y_dn")):
+        return atlas.FWD
+    for p in ("y_ret", "y_mfe", "y_mae"):
+        if label.startswith(p):
+            return int(label[len(p) :])
+    raise ValueError(f"unknown outcome column {label}")
+
+
+def label_gap(label: str) -> timedelta:
+    """Sessions -> calendar days, generous (weekends and holidays)."""
+    return timedelta(days=int(label_sessions(label) * 1.5) + 3)
+
+
 def purge(df: pl.DataFrame, label: str, periods: dict) -> pl.DataFrame:
     """Drop rows whose outcome window crosses the end of their period (DESIGN: purge / embargo), e.g. a 10-session
     outcome from the last days of the discovery period would use validation-period prices."""
-    h = int("".join(ch for ch in label if ch.isdigit()) or 0)
-    if h == 0:
-        return df
-    gap = timedelta(days=int(h * 1.5) + 3)  # sessions -> calendar days, generous
+    gap = label_gap(label)
     keep = pl.lit(False)
     for lo, hi in periods.values():
         keep = keep | ((C("as_of") >= lo) & (C("as_of") <= hi - gap))
