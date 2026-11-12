@@ -169,5 +169,5 @@ Owner feedback: signals must be horizon-specific with IN/TP/LS fixed at signal t
 
 - Owner (2026-11-12): "In the market-weather repository you may merge freely." Until now every PR waited for the owner.
 - Rule (CLAUDE.md): Claude may merge after CI is green and a `reviewer` subagent finds no serious issue, and reports each merge with the PR URL.
-- Still left to the owner: the forecast ledger, PIT rules, promotion gate thresholds, DESIGN.md principles (Section 0.2), secrets or workflow permissions, and deleting data.
+- Still left to the owner: the forecast ledger, PIT rules, promotion gate thresholds, DESIGN.md principles (Section 0.2); this rule itself and this ADR; `ci.yml` and anything that weakens tests or checks; secrets, workflow permissions, repository visibility; anything that adds cost; deleting data. (Reviewer 2026-11-12: otherwise Claude could widen its own rights or hollow out the CI condition.)
 - Deviation from DESIGN.md 13.4. That section allows auto-merge only for feature additions that passed the gates in shadow, and asks for an owner notice plus a 7-day delay before model-architecture or validation-protocol changes. Under the new rule, such changes are merged after review, and each one is recorded here as an ADR so the owner can follow it.
