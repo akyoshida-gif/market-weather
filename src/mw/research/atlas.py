@@ -9,10 +9,13 @@ Prefixes:
   s_*  stock features, known at the signal day's close (no look-ahead)
   m_*  market features of that day (same for every stock), joined later
   y_*  outcomes after the signal day. Entry = next session's open; ATR of the signal day is the unit.
-       y_ret_h       return to the close h sessions after entry (h in HORIZONS)
+       y_ret_h       return to the close of the h-th session counting the entry session as 1 (h in HORIZONS)
        y_mfe_h/mae_h highest high / lowest low within h sessions, in ATR from entry
        y_up_k / y_dn_k  session (1..FWD) on which the high first reached entry + k*ATR / the low first reached
-                     entry - k*ATR; null = not within FWD. "Stop hit, then target hit" = y_dn_k < y_up_k.
+                     entry - k*ATR. -1 = not reached within FWD sessions; null = unknown (data ends or a data
+                     error comes first). Compare only positive values: "stop first, then target" =
+                     (y_dn > 0) & (y_up > y_dn). The same session (y_up == y_dn) cannot be ordered with daily
+                     bars; treat it as stop first (conservative).
 """
 
 from __future__ import annotations
