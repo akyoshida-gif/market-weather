@@ -17,8 +17,10 @@ w = (
     .sort("as_of")
     .rename({"IDX:US:SPX": "spx", "IDX:US:VIX": "vix", "IDX:US:SKEW": "skew"})
 )
+END = date(2024, 6, 30)
+# cut at the end of the validation period BEFORE computing forward returns: no price after 2024-06 is used
 w = (
-    w.filter(C("as_of") >= date(1990, 1, 2))
+    w.filter((C("as_of") >= date(1990, 1, 2)) & (C("as_of") <= END))
     .drop_nulls(["spx"])
     .with_columns(
         (C("spx") / C("spx").rolling_mean(50) - 1).alias("dma50"),
@@ -27,8 +29,6 @@ w = (
         *[(C("spx").shift(-h) / C("spx") - 1).alias(f"f{h}") for h in (20, 60)],
     )
 )
-END = date(2024, 6, 30)
-w = w.filter(C("as_of") <= END)
 disc = C("as_of") <= date(2009, 12, 31)  # edges from 1990-2009 only
 conds = [("dma50", "low"), ("ret20", "low"), ("skew", "low"), ("vixz", "high")]
 d = w.filter(disc)

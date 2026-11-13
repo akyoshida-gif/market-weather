@@ -34,19 +34,6 @@ def ny_known_date(pub: pl.Expr) -> pl.Expr:
     return (pub + pl.duration(hours=8)).dt.convert_time_zone("America/New_York").dt.date()
 
 
-WEAK_EDGES = {"dma50": -0.0195, "ret20": -0.0241, "skew": 111.8, "vix_z250": 0.916}
-
-
-def weak_score() -> pl.Expr:
-    """Number of 'the market is weak' conditions (0-4); needs spy_dma50, spy_ret20, skew, vix_z250."""
-    return (
-        (C("spy_dma50") <= WEAK_EDGES["dma50"]).fill_null(False).cast(pl.Int8)
-        + (C("spy_ret20") <= WEAK_EDGES["ret20"]).fill_null(False).cast(pl.Int8)
-        + (C("skew") <= WEAK_EDGES["skew"]).fill_null(False).cast(pl.Int8)
-        + (C("vix_z250") >= WEAK_EDGES["vix_z250"]).fill_null(False).cast(pl.Int8)
-    )
-
-
 def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl.DataFrame:
     syms = [
         "SPY",
@@ -79,7 +66,6 @@ def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl
         (C("SPY") > C("SPY").rolling_mean(50)).alias("spy_up50"),
         (C("SPY") > C("SPY").rolling_mean(200)).alias("spy_up200"),
         _chg("SPY", 20).alias("spy_ret20"),
-        (C("SPY") / C("SPY").rolling_mean(50) - 1).alias("spy_dma50"),
         # the trend BEFORE a panic: 20 sessions ago SPY was above a rising 200-day line (panic_rebound)
         (
             (C("SPY") > C("SPY").rolling_mean(200))
@@ -106,13 +92,6 @@ def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl
             C("IDX:US:VIX").alias("vix"),
             (C("IDX:US:VIX") / C("IDX:US:VIX3M")).alias("vix_term"),
             (C("IDX:US:VIX") - C("IDX:US:VIX").shift(5)).alias("vix_chg5"),
-            (C("IDX:US:SKEW") if "IDX:US:SKEW" in v.columns else pl.lit(None, pl.Float64)).alias(
-                "skew"
-            ),
-            (
-                (C("IDX:US:VIX") - C("IDX:US:VIX").rolling_mean(250))
-                / C("IDX:US:VIX").rolling_std(250)
-            ).alias("vix_z250"),
         ).with_columns(
             # panic state (panic_rebound): the day before, and the highest level of the last 30 sessions
             C("vix").shift(1).alias("vix_prev"),
@@ -121,9 +100,6 @@ def us_regime(prices: pl.DataFrame, vol: pl.DataFrame, fred: pl.DataFrame) -> pl
             C("vix_term").rolling_max(30, min_samples=1).alias("vix_term_max30"),
         )
         r = r.join(v, on="as_of", how="left")
-        # weakness score (weak_dip): how many of four "the market is weak" conditions hold. Edges = the weakest
-        # 20% of days 1990-2009 (S&P 500 index, Cboe VIX / SKEW; docs/ATLAS_STUDY.md section 7)
-        r = r.sort("as_of").with_columns(weak_score().alias("weak_score"))
     if fred.height:
         # align each series by publication time: usable at the close of date t only if published
         # before 16:00 New York on t (later releases are usable from the next day; ADR-0016)

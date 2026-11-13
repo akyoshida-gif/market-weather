@@ -69,33 +69,3 @@ def test_cap_drops_names_that_move_too_much() -> None:
     assert df.filter(s.entry()).height == 0
     s2 = library.panic_rebound("US", "US:SPY", 30, "cross", "bs", 60, 3.0, cap="pre100")
     assert df.filter(s2.entry())["entity_id"].to_list() == ["US:AAA"]
-
-
-def test_weak_dip_buys_the_first_weak_day_of_an_uptrend_only() -> None:
-    n = 40
-    score = [0] * n
-    for i in (5, 6, 7, 30):
-        score[i] = 3
-    rows = []
-    for eid in ("US:SPY", "US:AAA"):
-        for i in range(n):
-            rows.append({"entity_id": eid, "as_of": date(2024, 1, 1) + timedelta(days=i), "close": 50.0, "atr": 1.0,
-                         "dvol20": 5e7, "beta_pct": 0.95, "pre_pct": 0.95, "weak_score": score[i],
-                         "spy_trend_pre": i < 20})  # fmt: skip
-    df = pl.DataFrame(rows).sort("entity_id", "as_of")
-    s = library.weak_dip("US", "US:SPY", 3, "index", 60, 0.0)
-    sig = df.filter(s.entry())
-    # day 5 only: days 6-7 are the same episode, day 30 is no longer in an uptrend
-    assert sig["entity_id"].to_list() == ["US:SPY"] and sig["as_of"].to_list() == [date(2024, 1, 6)]
-
-
-def test_weak_score_counts_the_four_conditions() -> None:
-    from mw.strategy import regime
-
-    df = pl.DataFrame({
-        "spy_dma50": [0.01, -0.03, -0.03, -0.03, None],
-        "spy_ret20": [0.02, 0.00, -0.05, -0.05, -0.05],
-        "skew": [130.0, 130.0, 130.0, 105.0, 105.0],
-        "vix_z250": [0.0, 0.0, 1.5, 1.5, None],
-    })  # fmt: skip
-    assert df.select(regime.weak_score())["spy_dma50"].to_list() == [0, 1, 3, 4, 2]

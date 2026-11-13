@@ -191,56 +191,6 @@ def panic_rebound(
     )  # fmt: skip
 
 
-def weak_dip(
-    market: str, bench: str, min_score: int, pick: str, hold: int, k: float, cap: str = ""
-) -> Strategy:
-    """Buy the dip of an uptrend: the first day the weakness score (regime.weak_score: S&P 500 under its 50-day
-    line, weak 20-day return, low SKEW, high VIX for its last year) reaches min_score, only if 20 sessions earlier
-    the S&P 500 was above a rising 200-day line. 1990-2024 (S&P 500): 46 such episodes, +3.9% after 60 sessions
-    on average (all days +2.2%), worst -9.4% (docs/ATLAS_STUDY.md section 7)."""
-    p_name, p_cond, p_rank = PANIC_PICK[pick]
-    if pick == "index":
-        p_cond, p_rank = (lambda: C("entity_id") == bench), (lambda: pl.lit(1.0))  # noqa: E731
-        universe = lambda: pl.lit(True)  # noqa: E731
-    else:
-        universe = lambda: liq(market, 10e6) & (C("close") >= 10)  # noqa: E731
-    assert p_cond is not None and p_rank is not None
-    pc, pr = p_cond, p_rank
-    cap_name, cap_ok = PANIC_CAP[cap] if cap else ("", lambda: pl.lit(True))
-
-    def first_day() -> pl.Expr:
-        fired = (C("weak_score") >= min_score).fill_null(False)
-        before = (
-            fired.cast(pl.Int8)
-            .shift(1)
-            .rolling_max(20, min_samples=1)
-            .over("entity_id")
-            .fill_null(0)
-        )
-        return fired & (before == 0)
-
-    stop_txt = f"損切りは {k:g}ATR 下" if k > 0 else "損切りは −40%（大事故の備えだけ）"
-    return Strategy(
-        key=f"weak_dip|s{min_score}|{pick}|h{hold}|k{k:g}" + (f"|{cap}" if cap else ""), label="上昇相場の押し目",
-        horizon="中期", side="long",
-        entry=lambda: first_day() & C("spy_trend_pre").fill_null(False) & pc() & universe() & cap_ok().fill_null(False),
-        stop=(lambda: C("close") - k * C("atr")) if k > 0 else (lambda: C("close") * 0.6), target=lambda: pl.lit(INF),
-        max_hold=hold, rank=pr, params={"min_score": min_score, "pick": pick, "hold": hold, "k": k, "cap": cap},
-        why=f"上昇相場の中で市場が弱った日に買う（S&P 500 が50日線の下・20日で下げ・SKEW が低い・VIX が高い、の4つのうち"
-        f"{min_score}つ以上が重なった最初の日。20日前は上向きの200日線の上）。1990年以降46回、60日後の平均+3.9%（全日+2.2%）。"
-        f"銘柄：{p_name}。{stop_txt}、{hold} 日後に売る。" + (f"行き過ぎた銘柄を除く：{cap_name}。" if cap else ""),
-    )  # fmt: skip
-
-
-def weak_grid(market: str, bench: str) -> list[Strategy]:
-    """Dip-in-uptrend variants. Research only, NOT in paper.yaml: 2011-2024 they did no better than holding the
-    S&P 500 (docs/ATLAS_STUDY.md section 7)."""
-    if market != "US":
-        return []
-    return [weak_dip(market, bench, 3, "index", 60, 0.0), weak_dip(market, bench, 3, "bs", 60, 3.0),
-            weak_dip(market, bench, 3, "bs", 60, 3.0, "atr6")]  # fmt: skip
-
-
 def panic_grid(market: str, bench: str) -> list[Strategy]:
     """Variants run side by side (owner 2026-11-06: many patterns, compare live). Backtest 2010-2026 in
     docs/PANIC_STUDY.md: results depend on a few large rebounds; none is proven yet."""
@@ -318,8 +268,8 @@ def by_key(market: str, bench: str, key: str) -> Strategy:
 
     base_key, _, rg = key.partition("|rg:")
     found = {
-        s.key: s for s in grid(market, bench) + panic_grid(market, bench) + weak_grid(market, bench)
-    }  # panic / weak_dip need regime columns
+        s.key: s for s in grid(market, bench) + panic_grid(market, bench)
+    }  # panic needs regime columns
     if base_key not in found:
         raise KeyError(f"unknown strategy {base_key}")
     s = found[base_key]
