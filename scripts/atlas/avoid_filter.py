@@ -109,16 +109,15 @@ both = 0
 tot = 0
 for k in r["key"].unique().to_list():
     ok = True
-    have = False
+    have = True
     for p in ("探す", "確認"):
         x = r.filter((C("key") == k) & (C("period") == p))
         a = x.filter(~C("spike"))
         b = x.filter(C("spike"))
         if a.height and b.height and b["n"][0] >= 10:
-            have = True
             ok &= b["exp_R"][0] < a["exp_R"][0]
         else:
-            ok = False
+            have = False  # comparable only with >= 10 spike trades in BOTH periods
     if have:
         tot += 1
         both += ok
