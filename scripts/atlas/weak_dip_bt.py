@@ -4,7 +4,7 @@ Weakness score = how many of four conditions hold: SPY under its 50-day line by 
 -2.41% or worse, Cboe SKEW 111.8 or lower, VIX z-score over its last 250 days 0.916 or higher (edges: the weakest
 20% of days of the S&P 500 index 1990-2009). Buy on the first day of an episode (score >= 3, none in the previous
 20 sessions; judged once for the whole market) when 20 sessions earlier SPY was above a rising 200-day line.
-Only trades whose exit is on or before 2024-06-30 count (the holdout starts 2024-07).
+Signals up to 2024-06-30 minus 60 sessions, so every trade ends before the holdout (2024-07).
 Usage: python scripts/atlas/weak_dip_bt.py <px_us.parquet> <vol_us.parquet>"""
 
 import sys
@@ -13,6 +13,7 @@ from datetime import date
 import numpy as np
 import polars as pl
 
+from mw.research import search
 from mw.strategy import engine
 from mw.strategy.engine import Strategy
 
@@ -108,10 +109,12 @@ f60 = np.full(len(c), np.nan)
 f60[:-60] = c[60:] / c[:-60] - 1
 sel = (s_all["as_of"] >= date(2011, 1, 1)).to_numpy()
 print(
-    f"比較：2011年〜（60日後が2024年6月まで）の全日の SPY 60日後の平均 {np.nanmean(f60[sel]) * 100:+.1f}%（上がった {np.nanmean(f60[sel] > 0) * 100:.0f}%）"
+    f"比較：2011年〜（60日後が2024年6月まで）の全日の SPY 60日後の平均 {np.nanmean(f60[sel]) * 100:+.1f}%（上がった {np.mean(f60[sel][np.isfinite(f60[sel])] > 0) * 100:.0f}%）"
 )
 for s in (strat("index", 0.0), strat("bs", 3.0)):
-    tr = engine.simulate(ind, s, "US").filter((C("exit_date") <= END) & (C("reason") != "open"))
+    # cut by the SIGNAL day so every trade has its full 60 sessions before 2024-06-30 (cutting by the exit day
+    # would keep only the trades stopped out early near the end)
+    tr = engine.simulate(ind, s, "US").filter(C("signal_date") <= END - search.label_gap("y_ret60"))
     rk = ind.select("entity_id", C("as_of").alias("signal_date"), s.rank().alias("rk"))
     tr = tr.join(rk, on=["entity_id", "signal_date"], how="left").sort(
         "signal_date", "rk", descending=[False, True]
