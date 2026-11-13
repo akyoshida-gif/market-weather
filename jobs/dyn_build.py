@@ -30,13 +30,14 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     uni = pl.read_parquet(a.uni).select("entity_id", "kind")
     common = uni.filter(C("kind") == "common").select("entity_id")
+    ohlcv = ["entity_id", "as_of", "open", "high", "low", "close", "volume", "splits"]
     rk = dynamics.rank_dynamics(
         pl.scan_parquet(a.px)
-        .select("entity_id", "as_of", "close")
+        .select(ohlcv)
         .join(common.lazy(), on="entity_id")
+        .collect()
     )
     print(f"順位 {rk.height:,} 行 {time.time() - t0:.0f}秒", flush=True)
-    ohlcv = ["entity_id", "as_of", "open", "high", "low", "close", "volume", "splits"]
     spy = dynamics.market_runs(
         pl.scan_parquet(a.px).filter(C("entity_id") == "US:SPY").select("as_of", "close").collect()
     )

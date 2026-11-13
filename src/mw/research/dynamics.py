@@ -50,12 +50,18 @@ RECENT, EARLIER = 10, 30  # divergence windows: last 10 sessions vs the 30 befor
 
 
 def _with_run(df: pl.DataFrame, sign: str, name: str) -> pl.DataFrame:
-    """Signed run length of the +1/-1 column `sign` per entity: adds _{name}_id (run number) and name."""
+    """Signed run length of the +1/-1 (or 1/0) column `sign` per entity: adds _{name}_id (run number) and name.
+    Null `sign` (the average cannot be computed yet) is not a state. The first run after `sign` becomes known has
+    an unknown start (it may have begun before the history), so its length is null too."""
+    s = C(sign)
+    rid = f"_{name}_id"
     df = df.with_columns(
-        (C(sign) != C(sign).shift(1)).fill_null(True).cum_sum().over(G).alias(f"_{name}_id")
+        (s.fill_null(-99) != s.fill_null(-99).shift(1)).fill_null(True).cum_sum().over(G).alias(rid)
     )
+    first = pl.when(s.is_not_null()).then(C(rid)).otherwise(None).min().over(G)
+    n = pl.int_range(1, pl.len() + 1).over(G, rid)
     return df.with_columns(
-        (C(sign) * pl.int_range(1, pl.len() + 1).over(G, f"_{name}_id")).alias(name)
+        pl.when(s.is_null() | (C(rid) == first)).then(None).otherwise(s * n).alias(name)
     )
 
 
@@ -100,19 +106,29 @@ def stock_dynamics(df: pl.DataFrame, spy: pl.DataFrame) -> pl.DataFrame:
             (d - d.shift(20)).over(G).alias(f"t_d{n}_ch20"),
             ((d - d.shift(5)) - (d.shift(5) - d.shift(10))).over(G).alias(f"t_d{n}_acc"),
             (d.abs() - d.abs().shift(5)).over(G).alias(f"t_d{n}_conv5"),
-            pl.when(d >= 0).then(1).otherwise(-1).cast(pl.Int32).alias(f"_sg{n}"),
+            pl.when(d.is_null())
+            .then(None)
+            .when(d >= 0)
+            .then(1)
+            .otherwise(-1)
+            .cast(pl.Int32)
+            .alias(f"_sg{n}"),
         ]
     df = df.with_columns(ex)
     for n in (20, 50, 200):
         df = _with_run(df, f"_sg{n}", f"t_run{n}")
     ex = []
     for n in (20, 50, 200):
-        rid, run, d = C(f"_t_run{n}_id"), C(f"t_run{n}"), C(f"t_d{n}")
+        rid, run, d, sg = C(f"_t_run{n}_id"), C(f"t_run{n}"), C(f"t_d{n}"), C(f"_sg{n}")
         start = (rid != rid.shift(1)).fill_null(True)
+        # a real cross: the state is known on both days and changed (the first known day is not a cross)
+        cross = ((sg != sg.shift(1)) & sg.is_not_null() & sg.shift(1).is_not_null()).fill_null(
+            False
+        )
         ex += [
             pl.when(start).then(run.shift(1)).otherwise(None).forward_fill().over(G).alias(f"t_prun{n}"),
-            start.cast(pl.Int32).rolling_sum(60).over(G).alias(f"t_x{n}_60"),
-            pl.when(run < 0).then(d.cum_min().over(G, rid)).otherwise(d.cum_max().over(G, rid)).alias(f"t_ext{n}"),
+            pl.when(sg.shift(59).is_null()).then(None).otherwise(cross.cast(pl.Int32).rolling_sum(60)).over(G).alias(f"t_x{n}_60"),
+            pl.when(sg.is_null()).then(None).when(sg < 0).then(d.cum_min().over(G, rid)).otherwise(d.cum_max().over(G, rid)).alias(f"t_ext{n}"),
         ]  # fmt: skip
     df = df.with_columns(ex)
     df = df.with_columns(
@@ -149,11 +165,11 @@ def stock_dynamics(df: pl.DataFrame, spy: pl.DataFrame) -> pl.DataFrame:
         ((rs - rs_m50) / C("_r1").rolling_std(50).clip(lower_bound=EPS)).alias("t_rs_d50"),
         (rs - rs.shift(5)).alias("t_rs_ch5"),
         (rs - rs.shift(20)).alias("t_rs_ch20"),
-        pl.when(rs >= rs_m50).then(1).otherwise(-1).cast(pl.Int32).alias("_rs_sg"),
+        pl.when(rs_m50.is_null() | rs.is_null()).then(None).when(rs >= rs_m50).then(1).otherwise(-1).cast(pl.Int32).alias("_rs_sg"),
         pl.rolling_corr(C("_r1"), C("_mr1"), window_size=60).alias("t_corr60"),
         (C("_clv").rolling_mean(5) - C("_clv").shift(5).rolling_mean(10)).alias("t_clv_trend"),
         (C("_lw") > 0.4).cast(pl.Int32).rolling_sum(10).alias("t_lwick10"),
-        pl.when(C("_rng") < C("_rng").shift(1)).then(1).otherwise(0).cast(pl.Int32).alias("_rsh"),
+        pl.when(C("_rng").shift(1).is_null()).then(None).when(C("_rng") < C("_rng").shift(1)).then(1).otherwise(0).cast(pl.Int32).alias("_rsh"),
         (C("_on").rolling_sum(5) - C("_id").rolling_sum(5)).alias("t_on_id5"),
         (C("_clv").rolling_mean(5)).alias("_clv5"),
         (v.rolling_mean(5) / C("_v50").clip(lower_bound=EPS)).alias("_vn5"),
@@ -229,26 +245,27 @@ def _window_dynamics(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def market_runs(spy: pl.DataFrame) -> pl.DataFrame:
-    """spy: as_of, close (SPY). Returns as_of, spy_close, spy_run200 (signed run above/below its 200-day mean)."""
+    """spy: as_of, close (SPY). Returns as_of, spy_close, spy_run200 (signed run above/below its 200-day mean;
+    null until the average exists and during the first run, whose start is unknown)."""
+    ma = C("close").rolling_mean(200)
     s = spy.sort("as_of").with_columns(
-        pl.when(C("close") >= C("close").rolling_mean(200)).then(1).otherwise(-1).alias("_sg")
+        pl.when(ma.is_null()).then(None).when(C("close") >= ma).then(1).otherwise(-1).alias("_sg"),
+        pl.lit("SPY").alias(G),
     )
-    run = (C("_sg") != C("_sg").shift(1)).fill_null(True).cum_sum()
-    s = s.with_columns(run.alias("_r"))
-    s = s.with_columns((C("_sg") * pl.int_range(1, pl.len() + 1).over("_r")).alias("spy_run200"))
+    s = _with_run(s, "_sg", "spy_run200")
     return s.select("as_of", C("close").alias("spy_close"), "spy_run200")
 
 
-def rank_dynamics(px: pl.LazyFrame) -> pl.DataFrame:
+def rank_dynamics(px: pl.DataFrame) -> pl.DataFrame:
     """Percentile of the 60-day return among all stocks each day and its change over 20 sessions.
-    px: entity_id, as_of, close (split-adjusted is fine: ratios only)."""
-    r = px.sort(G, "as_of").with_columns(
-        (C("close") / C("close").shift(60) - 1).over(G).alias("_r60")
-    )
+    px: entity_id, as_of, open, high, low, close, volume (+ splits: unadjusted steps are repaired first,
+    as in the atlas)."""
+    px = repair_splits(px.sort(G, "as_of")).sort(G, "as_of")
+    r = px.with_columns((C("close") / C("close").shift(60) - 1).over(G).alias("_r60"))
     r = r.filter(C("_r60").is_finite()).with_columns(
         (C("_r60").rank() / pl.len()).over("as_of").cast(pl.Float32).alias("t_rk60")
     )
     r = r.sort(G, "as_of").with_columns(
         (C("t_rk60") - C("t_rk60").shift(20)).over(G).alias("t_rk60_ch20")
     )
-    return r.select(G, "as_of", "t_rk60", "t_rk60_ch20").collect()
+    return r.select(G, "as_of", "t_rk60", "t_rk60_ch20")

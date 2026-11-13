@@ -56,7 +56,7 @@ print(
 asof = df["as_of"]
 disc = ((asof >= P["discovery"][0]) & (asof <= P["discovery"][1])).to_numpy()
 val = ((asof >= P["validation"][0]) & (asof <= P["validation"][1])).to_numpy()
-ym = (asof.dt.year().cast(pl.Int64) * 12 + asof.dt.month().cast(pl.Int64)).to_numpy()
+ym = (asof.dt.year().cast(pl.Int64) * 12 + asof.dt.month().cast(pl.Int64) - 1).to_numpy()
 months, mi = np.unique(ym, return_inverse=True)
 yom = months // 12
 Y = {k: df[k].to_numpy() for k in ("ex20", "big20")}
@@ -140,6 +140,7 @@ runb = [
     (21, 60),
     (61, 120),
     (121, 9999),
+    (None, None),
 ]
 depth = [
     (-9, -0.20),
@@ -159,24 +160,32 @@ for per, pm in (("探す", disc), ("確認", val)):
         "  "
         + " " * 12
         + "".join(
-            f"{f'{a:+.0%}〜{b:+.0%}' if abs(a) < 9 and abs(b) < 9 else ('〜' + f'{b:+.0%}' if a < -8 else f'{a:+.0%}〜'):>16}"
+            f"{f'{a:+.0%}〜{b:+.0%}' if abs(a) < 9 and abs(b) < 9 else ('〜' + f'{b:+.0%}' if a < -8 else f'{a:+.0%}〜'):>22}"
             for a, b in depth
         )
     )
     for a, b in runb:
         cells = []
         for c0, c1 in depth:
-            m = pm & (run >= a) & (run <= b) & (dd > c0) & (dd <= c1)
+            rm = ~np.isfinite(run) if a is None else (run >= a) & (run <= b)
+            m = pm & rm & (dd > c0) & (dd <= c1)
             if m.sum() < 300:
-                cells.append(f"{'':>16}")
+                cells.append(f"{'':>22}")
                 continue
             r1, r2 = st_(m, Y["ex20"]), st_(m, Y["big20"])
             cells.append(
-                f"{r1['mean'] * 100:+5.1f}%/{r2['mean'] * 100:+5.1f}pt{'*' if abs(r1['t']) >= 3 else ' ':1}"
+                f"{r1['mean'] * 100:+5.1f}%{'*' if abs(r1['t']) >= 3 else ' ':1}/{r2['mean'] * 100:+5.1f}pt(t{r2['t']:+5.1f})"
             )
-        lab = f"{a}〜{b}" if abs(a) < 9999 and abs(b) < 9999 else (f"〜{b}" if a < 0 else f"{a}〜")
-        print(f"  {lab:>12}" + "".join(f"{c:>16}" for c in cells))
+        if a is None:
+            lab = "不明（最初）"
+        else:
+            lab = (
+                f"{a}〜{b}"
+                if abs(a) < 9999 and abs(b) < 9999
+                else (f"〜{b}" if a < 0 else f"{a}〜")
+            )
+        print(f"  {lab:>12}" + "".join(f"{c:>22}" for c in cells))
 print(
-    "  （各升：20日後の市場平均との差 / 大負けの率の、同じ日・同じ値動きの激しさの銘柄との差。* は月ごとの t値の絶対値が3以上。300件未満は空欄）"
+    "  （各升：20日後の市場平均との差 / 大負けの率の、同じ日・同じ値動きの激しさの銘柄との差。* は20日後の差の月ごとの t値の絶対値が3以上、括弧は大負けの率の差の t値。300件未満は空欄。「不明（最初）」は、記録の始めからの最初の状態で、いつ始まったか分からない行）"
 )
 print(f"\n合計 {time.time() - t0:.0f}秒")

@@ -22,14 +22,13 @@ dyn = pl.scan_parquet(f"{A}/dyn/*.parquet").join(
     df.select("entity_id", "as_of").lazy(), on=["entity_id", "as_of"], how="semi"
 )
 df = df.join(dyn.collect(), on=["entity_id", "as_of"], how="left")
-extra = pl.scan_parquet(f"{A}/stocks/*.parquet").select(
-    "entity_id", "as_of", "y_mae20", C("s_atrp").alias("_atrp")
+extra = (
+    pl.scan_parquet(f"{A}/stocks/*.parquet")
+    .select("entity_id", "as_of", "y_mae20", C("s_atrp").alias("_atrp"))
+    .join(df.select("entity_id", "as_of").lazy(), on=["entity_id", "as_of"], how="semi")
+    .collect()
 )
-df = df.join(
-    extra.collect().join(df.select("entity_id", "as_of"), on=["entity_id", "as_of"], how="semi"),
-    on=["entity_id", "as_of"],
-    how="left",
-)
+df = df.join(extra, on=["entity_id", "as_of"], how="left")
 dynf = [c for c in df.columns if c.startswith("t_")]
 df = df.with_columns(
     C("as_of").dt.year().alias("yr"), ((C("y_mae20") * C("_atrp")) <= -0.10).alias("big")

@@ -1,6 +1,8 @@
 """Idea 49/50: hold only overnight (buy the close, sell the next open) or only intraday (buy the next open, sell
-that close). Which stock states make each side strong? Per-trade returns are absolute (no costs, owner 2026-11-13)
-and also minus the same-day average. Quintile edges from discovery only; counted by month.
+that close). Which stock states make each side strong? Per-trade returns are absolute (no costs, owner 2026-11-13),
+NOT minus the same-day average, so on sampled days the market's own move dominates: ATLAS_STUDY 9 shows that the
+picks of this sampled search shrink on every session. Kept as a record of that pitfall. Quintile edges from
+discovery only; counted by month.
 Usage: python scripts/atlas/overnight.py <atlas_dir> <px.parquet> <every>"""
 
 import sys
@@ -9,7 +11,7 @@ import time
 import numpy as np
 import polars as pl
 
-from mw.research import search
+from mw.research import atlas, search
 
 C = pl.col
 sys.stdout.reconfigure(encoding="utf-8")
@@ -32,25 +34,38 @@ st = (
     .join(days.lazy(), on="as_of", how="semi")
     .select("entity_id", "as_of", *sf, C("y_ret1").alias("id1"))
 )
+# prices with unadjusted split steps repaired (as in the atlas); only the stocks in the study
+_ids = st.select("entity_id").unique().collect()["entity_id"].to_list()
+_px = (
+    pl.scan_parquet(PX)
+    .filter(C("entity_id").is_in(_ids))
+    .select("entity_id", "as_of", "open", "high", "low", "close", "volume", "splits")
+    .collect()
+)
 nxt = (
-    pl.scan_parquet(PX).select("entity_id", "as_of", "open", "close").sort("entity_id", "as_of")
-    .with_columns((C("open").shift(-1) / C("close") - 1).over("entity_id").alias("on1")).select("entity_id", "as_of", "on1")
-)  # fmt: skip
+    atlas.repair_splits(_px)
+    .sort("entity_id", "as_of")
+    .with_columns(
+        (C("open").shift(-1) / C("close") - 1).over("entity_id").alias("on1"),
+    )
+    .select("entity_id", "as_of", "on1")
+    .lazy()
+)
+del _px
 dyn = pl.scan_parquet(f"{A}/dyn/*.parquet")
 df = (
     st.join(nxt, on=["entity_id", "as_of"], how="left")
     .join(dyn, on=["entity_id", "as_of"], how="left")
     .collect()
 )
-df = df.filter(
-    C("on1").is_finite() & C("id1").is_finite() & (C("on1").abs() < 0.5) & (C("id1").abs() < 0.5)
-)
+# no filter on the outcomes themselves: data errors are excluded by the atlas from signal-day data (bad20)
+df = df.filter(C("on1").is_finite() & C("id1").is_finite())
 df = search.purge(df, "y_ret1", P)
 feats = [c for c in df.columns if c.startswith(("s_", "t_"))]
 asof = df["as_of"]
 disc = ((asof >= P["discovery"][0]) & (asof <= P["discovery"][1])).to_numpy()
 val = ((asof >= P["validation"][0]) & (asof <= P["validation"][1])).to_numpy()
-ym = (asof.dt.year().cast(pl.Int64) * 12 + asof.dt.month().cast(pl.Int64)).to_numpy()
+ym = (asof.dt.year().cast(pl.Int64) * 12 + asof.dt.month().cast(pl.Int64) - 1).to_numpy()
 months, mi = np.unique(ym, return_inverse=True)
 yom = months // 12
 print(f"{df.height:,} 行・{len(feats)} 個 {time.time() - t0:.0f}秒", flush=True)

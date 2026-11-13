@@ -39,10 +39,10 @@ def test_runs_and_crosses_of_the_20_day_average():
     closes = [100 + i for i in range(70)] + [100.0] * 10
     out = dynamics.stock_dynamics(_frame(closes), _spy(80)).sort("as_of")
     run = out["t_run20"].to_list()
-    assert run[69] > 0  # still above while rising
-    assert run[-1] == -10  # ten sessions below
-    assert out["t_prun20"][-1] == run[69]  # the previous state was the rising run
-    assert out["t_x20_60"][-1] == 1
+    assert run[69] is None  # the first known state: its start is unknown
+    assert run[-1] == -10  # ten sessions below after a real cross
+    assert out["t_prun20"][-1] is None  # the run before had an unknown start
+    assert out["t_x20_60"][-1] == 1  # the first known day is not a cross
     # deepest point of the current state is on its first day; it came back since (prices flat, average falls)
     assert out["t_back20"][-1] > 0
 
@@ -63,8 +63,27 @@ def test_relative_strength_and_rank():
     closes = [100 * 1.01**i for i in range(80)]
     out = dynamics.stock_dynamics(_frame(closes), _spy(80)).sort("as_of")
     assert out["t_rs_ch20"][-1] > 0  # beats the slowly rising market
-    px = pl.concat([_frame(closes, "US:A"), _frame([100.0] * 80, "US:B")]).lazy()
+    px = pl.concat([_frame(closes, "US:A"), _frame([100.0] * 80, "US:B")])
     rk = dynamics.rank_dynamics(px).sort("as_of")
     a = rk.filter(C("entity_id") == "US:A")["t_rk60"][-1]
     b = rk.filter(C("entity_id") == "US:B")["t_rk60"][-1]
     assert a > b
+
+
+def test_unknown_start_is_not_counted():
+    # 200 days of decline then 60 flat days: the 200-day average exists only from day 200, so how long the stock
+    # has been below it is unknown (it may have been below before the history starts)
+    closes = list(np.linspace(200, 100, 200)) + [100.0] * 60
+    out = dynamics.stock_dynamics(_frame(closes), _spy(260)).sort("as_of")
+    assert out["t_run200"][150] is None  # no 200-day average yet
+    assert out["t_run200"][-1] is None  # first known state: start unknown
+    assert out["t_d200"][-1] < 0
+
+
+def test_run_after_a_real_cross_is_counted():
+    # 220 days rising (first known state: above), then a drop below for 15 days
+    closes = list(np.linspace(100, 200, 220)) + [120.0] * 15
+    out = dynamics.stock_dynamics(_frame(closes), _spy(235)).sort("as_of")
+    assert out["t_run200"][219] is None  # first known run
+    assert out["t_run200"][-1] == -15
+    assert out["t_prun200"][-1] is None  # the run before had an unknown start

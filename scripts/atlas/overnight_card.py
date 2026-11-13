@@ -9,6 +9,8 @@ from datetime import date
 import numpy as np
 import polars as pl
 
+from mw.research import atlas
+
 C = pl.col
 sys.stdout.reconfigure(encoding="utf-8")
 A, PX = sys.argv[1], sys.argv[2]
@@ -24,19 +26,29 @@ st = (
     )
     .select("entity_id", "as_of", "s_id20", "s_atrp", "s_vol20", "s_ret5")
 )
-nxt = (
+# prices with unadjusted split steps repaired (as in the atlas); only the stocks in the study
+_ids = st.select("entity_id").unique().collect()["entity_id"].to_list()
+_px = (
     pl.scan_parquet(PX)
-    .select("entity_id", "as_of", "open", "close")
+    .filter(C("entity_id").is_in(_ids))
+    .select("entity_id", "as_of", "open", "high", "low", "close", "volume", "splits")
+    .collect()
+)
+nxt = (
+    atlas.repair_splits(_px)
     .sort("entity_id", "as_of")
     .with_columns(
         (C("open").shift(-1) / C("close") - 1).over("entity_id").alias("on1"),
         C("as_of").shift(-1).over("entity_id").alias("next_day"),
     )
     .select("entity_id", "as_of", "on1", "next_day")
+    .lazy()
 )
+del _px
 df = st.join(nxt, on=["entity_id", "as_of"], how="inner").collect()
 # the sale happens on the next session; keep only trades that end before the holdout
-df = df.filter(C("on1").is_finite() & (C("on1").abs() < 0.5) & (C("next_day") <= END))
+# no filter on the outcome itself: data errors are already excluded by the atlas from signal-day data (bad20)
+df = df.filter(C("on1").is_finite() & (C("next_day") <= END))
 spy = (
     pl.scan_parquet(PX)
     .filter(C("entity_id") == "US:SPY")
